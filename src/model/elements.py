@@ -2,24 +2,27 @@ import numpy as np
 import pyvista as pv
 
 class Pilar:
-    def __init__(self, x, y, width=0.30, depth=0.30, height=3.0):
+    def __init__(self, x, y, start_z, end_z, width=0.30, depth=0.30):
         self.x = x
         self.y = y
+        self.start_z = start_z
+        self.end_z = end_z
         self.width = width
         self.depth = depth
-        self.height = height
         self.mesh = self._create_mesh()
         
     def _create_mesh(self):
-        # El pilar se asume que nace en Z=0 y va hasta Z=height
-        center = (self.x, self.y, self.height / 2)
-        mesh = pv.Cube(center=center, x_length=self.width, y_length=self.depth, z_length=self.height)
+        height = abs(self.end_z - self.start_z)
+        if height == 0:
+            return pv.PolyData()
+        center = (self.x, self.y, (self.start_z + self.end_z) / 2)
+        mesh = pv.Cube(center=center, x_length=self.width, y_length=self.depth, z_length=height)
         return mesh
 
 class Viga:
-    def __init__(self, p1, p2, width=0.30, height=0.40):
-        self.p1 = np.array(p1) # (x, y, z)
-        self.p2 = np.array(p2) # (x, y, z)
+    def __init__(self, p1, p2, z_level, width=0.30, height=0.40):
+        self.p1 = np.array([p1[0], p1[1], z_level])
+        self.p2 = np.array([p2[0], p2[1], z_level])
         self.width = width
         self.height = height
         self.mesh = self._create_mesh()
@@ -42,7 +45,6 @@ class Viga:
         w2 = self.width / 2
         h = self.height
         
-        # Asumimos que p1 y p2 definen la cara superior central de la viga
         p1_top_left = self.p1 - right * w2
         p1_top_right = self.p1 + right * w2
         p1_bot_left = self.p1 - right * w2 - up * h
@@ -71,9 +73,9 @@ class Viga:
         return mesh
 
 class Losa:
-    def __init__(self, vertices, thickness=0.20):
-        # vertices es una lista de coordenadas (x, y, z) del polígono
-        self.points = np.array(vertices)
+    def __init__(self, vertices, z_level, thickness=0.20):
+        # vertices es una lista de (x, y)
+        self.points = np.array([[v[0], v[1], z_level] for v in vertices])
         self.thickness = thickness
         self.mesh = self._create_mesh()
         
@@ -84,14 +86,14 @@ class Losa:
         faces = [len(self.points)] + list(range(len(self.points)))
         poly = pv.PolyData(self.points, faces)
         
-        # Extruir hacia abajo
         mesh = poly.extrude((0, 0, -self.thickness), capping=True)
         return mesh
 
 class Grilla:
-    def __init__(self, x_lines, y_lines):
+    def __init__(self, x_lines, y_lines, z_level=0.0):
         self.x_lines = x_lines
         self.y_lines = y_lines
+        self.z_level = z_level
         self.mesh = self._create_mesh()
         
     def _create_mesh(self):
@@ -106,14 +108,14 @@ class Grilla:
         
         idx = 0
         for x in self.x_lines:
-            points.append([x, min_y, 0])
-            points.append([x, max_y, 0])
+            points.append([x, min_y, self.z_level])
+            points.append([x, max_y, self.z_level])
             lines.extend([2, idx, idx+1])
             idx += 2
             
         for y in self.y_lines:
-            points.append([min_x, y, 0])
-            points.append([max_x, y, 0])
+            points.append([min_x, y, self.z_level])
+            points.append([max_x, y, self.z_level])
             lines.extend([2, idx, idx+1])
             idx += 2
             
