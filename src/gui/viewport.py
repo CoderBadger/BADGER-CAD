@@ -35,7 +35,7 @@ class Viewport3D(QWidget):
         self.plotter.view_xy()
         self.plotter.camera.parallel_projection = True
         # Habilitar pan (desplazamiento) con click izquierdo, deshabilitar rotacion
-        self.plotter.enable_pan_style()
+        self.plotter.enable_2d_style()
         self.refresh_scene()
         
     def set_3d_mode(self):
