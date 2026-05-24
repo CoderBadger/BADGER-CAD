@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         # Ribbon → tools
         self._ribbon.tool_pilar_requested.connect(self._activate_pilar_tool)
+        self._ribbon.tool_borrar_pilar_requested.connect(self._activate_borrar_pilar_tool)
         self._ribbon.tool_losa_requested.connect(self._activate_losa_tool)
         self._ribbon.vista_3d_requested.connect(self._open_3d_viewer)
         self._ribbon.gestionar_plantas.connect(self._open_nivel_manager)
@@ -111,8 +112,11 @@ class MainWindow(QMainWindow):
         self._canvas.mouse_moved.connect(self._on_mouse_moved)
         self._canvas.status_changed.connect(self._on_status_changed)
 
-        # Canvas deactivate also unchecks ribbon buttons
-        # (tool deactivation signal propagated via status_changed)
+        # Canvas tool deactivation → uncheck ribbon (covers ESC inside tools)
+        self._canvas.tool_deactivated.connect(self._ribbon.uncheck_all_tools)
+
+        # Canvas snap toggle → snap label
+        self._canvas.snap_changed.connect(self._on_snap_changed)
 
         # Project → status bar nivel label
         self.project.nivel_activo_changed.connect(self._refresh_nivel_label)
@@ -129,6 +133,14 @@ class MainWindow(QMainWindow):
             self._canvas.set_tool(tool)
         else:
             self._ribbon.uncheck_all_tools()
+        # Release any stuck mouse button state caused by the dialog
+        # absorbing the Qt mouse-release event before VTK saw it.
+        self._canvas.release_mouse_state()
+
+    def _activate_borrar_pilar_tool(self) -> None:
+        from badgercad.cad.tools.borrar_pilar_tool import BorrarPilarTool
+        tool = BorrarPilarTool(self._canvas)
+        self._canvas.set_tool(tool)
 
     def _activate_losa_tool(self) -> None:
         from badgercad.cad.tools.losa_tool import LosaTool
@@ -172,7 +184,16 @@ class MainWindow(QMainWindow):
 
     def _on_grid_changed(self, spacing: float) -> None:
         self._canvas.update_grid(spacing)
-        self._lbl_snap.setText(f"SNAP: {spacing:.2f} m")
+        # Snap label is updated reactively via snap_changed signal when enabled
+        # Update directly here too for immediate feedback:
+        if self._canvas.snap_enabled:
+            self._lbl_snap.setText(f"SNAP: {spacing:.2f} m")
+
+    def _on_snap_changed(self, enabled: bool, spacing: float) -> None:
+        if enabled:
+            self._lbl_snap.setText(f"SNAP: {spacing:.2f} m")
+        else:
+            self._lbl_snap.setText("SNAP: OFF")
 
     def _refresh_nivel_label(self) -> None:
         nivel = self.project.nivel_activo

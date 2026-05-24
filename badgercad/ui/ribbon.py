@@ -154,14 +154,15 @@ class Ribbon(QWidget):
         nuevo_proyecto:        New project requested.
     """
 
-    tool_pilar_requested  = pyqtSignal()
-    tool_losa_requested   = pyqtSignal()
-    vista_3d_requested    = pyqtSignal()
-    gestionar_plantas     = pyqtSignal()
-    datos_generales       = pyqtSignal()
-    grid_spacing_changed  = pyqtSignal(float)
-    nuevo_proyecto        = pyqtSignal()
-    esc_tool              = pyqtSignal()
+    tool_pilar_requested        = pyqtSignal()
+    tool_borrar_pilar_requested = pyqtSignal()
+    tool_losa_requested         = pyqtSignal()
+    vista_3d_requested          = pyqtSignal()
+    gestionar_plantas           = pyqtSignal()
+    datos_generales             = pyqtSignal()
+    grid_spacing_changed        = pyqtSignal(float)
+    nuevo_proyecto              = pyqtSignal()
+    esc_tool                    = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -255,12 +256,19 @@ class Ribbon(QWidget):
                                     checkable=True)
         self._btn_pilar.clicked.connect(self._on_pilar_clicked)
 
+        self._btn_borrar_pilar = _tool_btn("🗑", "Borrar\nPilar",
+                                           "Borrar pilar existente (clic sobre él)",
+                                           checkable=True)
+        self._btn_borrar_pilar.clicked.connect(self._on_borrar_pilar_clicked)
+
         self._btn_pantalla = _tool_btn("🧱", "Pantalla\n/Muro",
                                        "Muro de corte o pantalla [Hito 2]")
         self._btn_pantalla.setEnabled(False)
 
         lay.addWidget(_group_widget("Soportes Verticales",
                                     [self._btn_pilar, self._btn_pantalla]))
+        lay.addWidget(_separator())
+        lay.addWidget(_group_widget("Edición", [self._btn_borrar_pilar]))
         lay.addWidget(_separator())
 
         self._btn_esc_p = _tool_btn("✕", "ESC / Fin",
@@ -273,21 +281,30 @@ class Ribbon(QWidget):
     def _tab_losas(self) -> QWidget:
         w   = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(6, 0, 6, 0)
+        lay.setContentsMargins(12, 0, 12, 0)
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        # Losa tool is DISABLED for Hito 1.
+        # In CYPECAD, slabs are created by clicking inside closed bays defined
+        # by beams — not by free polygon drawing.  Hito 2 will introduce the
+        # Viga tool and Shapely bay-detection before re-enabling this.
         self._btn_losa = _tool_btn("▭", "Dibujar\nLosa",
-                                   "Dibujar losa poligonal (clic + ENTER)",
+                                   "Disponible en Hito 2 (requiere vigas para"
+                                   " delimitar recintos cerrados)",
                                    checkable=True)
-        self._btn_losa.clicked.connect(self._on_losa_clicked)
+        self._btn_losa.setEnabled(False)
+        self._btn_losa.setToolTip(
+            "Las losas se crean haciendo clic dentro de recintos\n"
+            "cerrados por vigas (flujo CYPECAD).\n"
+            "Disponible en Hito 2."
+        )
+
+        note = QLabel("  ⓘ  Las losas se habilitarán en el Hito 2 (tras definir vigas).")
+        note.setStyleSheet("color:#4A5A6A;font-size:11px;")
 
         lay.addWidget(_group_widget("Losas", [self._btn_losa]))
-        lay.addWidget(_separator())
-
-        self._btn_esc_l = _tool_btn("✕", "ESC / Fin", "Terminar herramienta activa")
-        self._btn_esc_l.clicked.connect(self.esc_tool)
-        lay.addWidget(_group_widget("Control", [self._btn_esc_l]))
+        lay.addWidget(note)
         lay.addStretch()
         return w
 
@@ -321,13 +338,23 @@ class Ribbon(QWidget):
     # ------------------------------------------------------------------ handlers
     def _on_pilar_clicked(self) -> None:
         self._btn_losa.setChecked(False)
+        self._btn_borrar_pilar.setChecked(False)
         if self._btn_pilar.isChecked():
             self.tool_pilar_requested.emit()
         else:
             self.esc_tool.emit()
 
+    def _on_borrar_pilar_clicked(self) -> None:
+        self._btn_pilar.setChecked(False)
+        self._btn_losa.setChecked(False)
+        if self._btn_borrar_pilar.isChecked():
+            self.tool_borrar_pilar_requested.emit()
+        else:
+            self.esc_tool.emit()
+
     def _on_losa_clicked(self) -> None:
         self._btn_pilar.setChecked(False)
+        self._btn_borrar_pilar.setChecked(False)
         if self._btn_losa.isChecked():
             self.tool_losa_requested.emit()
         else:
@@ -343,3 +370,4 @@ class Ribbon(QWidget):
         """Called when ESC or deactivate_tool fires."""
         self._btn_pilar.setChecked(False)
         self._btn_losa.setChecked(False)
+        self._btn_borrar_pilar.setChecked(False)

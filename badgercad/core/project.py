@@ -50,6 +50,9 @@ class Project(QObject):
         self._nivel_activo: Optional[Nivel] = None
         self._grupo_activo: Optional[Grupo] = None
 
+        # Undo stack: list of (str, *args) tuples, max 20 entries
+        self._undo_stack: list = []
+
         self._crear_estructura_inicial()
 
     # ------------------------------------------------------------------ defaults
@@ -123,9 +126,13 @@ class Project(QObject):
     # ------------------------------------------------------------------ mutators
     def add_pilar(self, pilar: Pilar) -> None:
         self.pilares.append(pilar)
+        self._push_undo(('pilar_added', pilar.id))
         self.pilares_changed.emit()
 
-    def remove_pilar(self, pilar_id: str) -> None:
+    def remove_pilar(self, pilar_id: str, record: bool = True) -> None:
+        pilar = next((p for p in self.pilares if p.id == pilar_id), None)
+        if pilar and record:
+            self._push_undo(('pilar_removed', pilar))  # save full object for re-add
         self.pilares = [p for p in self.pilares if p.id != pilar_id]
         self.pilares_changed.emit()
 
@@ -169,11 +176,39 @@ class Project(QObject):
         self.losas.clear()
         self._nivel_activo = None
         self._grupo_activo = None
+        self.clear_undo()
         self._crear_estructura_inicial()
         self.project_reset.emit()
         self.niveles_changed.emit()
         self.pilares_changed.emit()
         self.losas_changed.emit()
+
+    # ------------------------------------------------------------------ undo
+    def _push_undo(self, cmd: tuple) -> None:
+        """Push a command onto the undo stack (max 20 entries)."""
+        self._undo_stack.append(cmd)
+        if len(self._undo_stack) > 20:
+            self._undo_stack.pop(0)
+
+    def undo(self) -> bool:
+        """Undo the last recorded action. Returns True if something was undone."""
+        if not self._undo_stack:
+            return False
+        cmd = self._undo_stack.pop()
+        action = cmd[0]
+        if action == 'pilar_added':
+            pilar_id = cmd[1]
+            self.pilares = [p for p in self.pilares if p.id != pilar_id]
+            self.pilares_changed.emit()
+        elif action == 'pilar_removed':
+            pilar = cmd[1]
+            self.pilares.append(pilar)
+            self.pilares_changed.emit()
+        return True
+
+    def clear_undo(self) -> None:
+        """Clear the undo stack (call on project reset)."""
+        self._undo_stack.clear()
 
     # ------------------------------------------------------------------ stats
     def stats(self) -> dict:

@@ -27,29 +27,79 @@ LABEL_COLOR      = "#FFFFFF"
 
 # ================================================================== mesh builders
 def _pilar_box_2d(pilar) -> pv.PolyData:
-    """Flat box (z=0) representing a column footprint for 2D plan view."""
-    x, y = pilar.x, pilar.y
+    """Flat box (z=0) representing a column footprint for 2D plan view.
+
+    Built centred at origin, rotated by pilar.angulo, then translated.
+    """
     a, l = pilar.ancho / 2, pilar.largo / 2
-    box = pv.Box(bounds=(x - a, x + a, y - l, y + l, -0.02, 0.02))
+    box = pv.Box(bounds=(-a, a, -l, l, -0.02, 0.02))
+    if pilar.angulo:
+        box.rotate_z(pilar.angulo, inplace=True)
+    box.translate([pilar.x, pilar.y, 0.0], inplace=True)
     return box
 
 
 def _pilar_box_3d(pilar, z_bottom: float, z_top: float) -> pv.PolyData:
-    """Full-height 3D box for a column in the perspective viewer."""
-    x, y = pilar.x, pilar.y
-    a, l = pilar.ancho / 2, pilar.largo / 2
-    box = pv.Box(bounds=(x - a, x + a, y - l, y + l, z_bottom, z_top))
+    """Full-height 3D box for a column in the perspective viewer.
+
+    Built centred at origin, rotated by pilar.angulo, then translated.
+    """
+    a, l  = pilar.ancho / 2, pilar.largo / 2
+    z_mid = (z_bottom + z_top) / 2
+    half_h = (z_top - z_bottom) / 2
+    box = pv.Box(bounds=(-a, a, -l, l, -half_h, half_h))
+    if pilar.angulo:
+        box.rotate_z(pilar.angulo, inplace=True)
+    box.translate([pilar.x, pilar.y, z_mid], inplace=True)
     return box
 
 
 def _losa_polygon(losa, z: float = 0.0) -> Optional[pv.PolyData]:
-    """Flat filled polygon for a slab."""
+    """Flat filled polygon for a slab — used only in the 2D plan canvas."""
     if not losa.is_valid():
         return None
     verts = np.array([[v[0], v[1], z] for v in losa.vertices], dtype=float)
     n = len(verts)
     faces = np.array([n, *range(n)], dtype=int)
     mesh = pv.PolyData(verts, faces)
+    return mesh
+
+
+def _losa_solid_3d(losa, z_top: float) -> Optional[pv.PolyData]:
+    """Extruded solid for a slab in the 3D perspective viewer.
+
+    The polygon is placed at ``z_top`` (the floor elevation) and extruded
+    downward by ``losa.espesor`` metres, producing a volumetric solid whose
+    thickness matches the value the engineer entered in LosaPropsDialog.
+    """
+    if not losa.is_valid():
+        return None
+
+    espesor = max(losa.espesor, 0.01)   # safety floor: never zero-thickness
+    z_bot   = z_top - espesor
+
+    # Build top and bottom face vertices
+    top_verts = np.array([[v[0], v[1], z_top] for v in losa.vertices], dtype=float)
+    bot_verts = np.array([[v[0], v[1], z_bot] for v in losa.vertices], dtype=float)
+    n = len(top_verts)
+
+    all_verts = np.vstack([top_verts, bot_verts])  # top: 0..n-1, bot: n..2n-1
+
+    faces: list[int] = []
+
+    # Top face (facing up)
+    faces += [n] + list(range(n))
+
+    # Bottom face (facing down — reversed winding)
+    faces += [n] + list(range(2 * n - 1, n - 1, -1))
+
+    # Side quad faces
+    for i in range(n):
+        j = (i + 1) % n
+        # quad: top_i, top_j, bot_j, bot_i
+        faces += [4, i, j, j + n, i + n]
+
+    mesh = pv.PolyData(all_verts, np.array(faces, dtype=int))
     return mesh
 
 
@@ -191,21 +241,26 @@ def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
         )
 
     # --- Losas 3D --------------------------------------------------
+    # Each grupo may span multiple niveles; render the slab at every nivel
+    # it belongs to so repeated floors are visible.
     for grupo in project.grupos:
-        if not grupo.nivel_ids:
-            continue
-        nivel_rep = project.get_nivel_by_id(grupo.nivel_ids[0])
-        if nivel_rep is None:
-            continue
-        z = nivel_rep.cota
-        for losa in project.get_losas_en_grupo(grupo.id):
-            mesh = _losa_polygon(losa, z=z)
-            if mesh is not None:
-                plotter.add_mesh(
-                    mesh, color=LOSA_COLOR, opacity=0.55,
-                    show_edges=True, edge_color=LOSA_EDGE_COLOR, line_width=1.0,
-                    name=f"l3d_{losa.id}",
-                )
+        niveles_del_grupo = [
+            project.get_nivel_by_id(nid)
+            for nid in grupo.nivel_ids
+        ]
+        niveles_del_grupo = [nv for nv in niveles_del_grupo if nv is not None]
+
+        for nivel_rep in niveles_del_grupo:
+            z_top = nivel_rep.cota
+            for losa in project.get_losas_en_grupo(grupo.id):
+                mesh = _losa_solid_3d(losa, z_top=z_top)
+                if mesh is not None:
+                    plotter.add_mesh(
+                        mesh,
+                        color=LOSA_COLOR, opacity=0.70,
+                        show_edges=True, edge_color=LOSA_EDGE_COLOR, line_width=0.8,
+                        name=f"l3d_{losa.id}_{nivel_rep.id}",
+                    )
 
     # --- Level planes (ghost floors) --------------------------------
     for nivel in project.niveles_ordenados()[1:]:

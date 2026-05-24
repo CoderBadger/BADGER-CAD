@@ -6,7 +6,9 @@ Workflow (matches CYPECAD exactly):
   3. User defines section, material, spans, vinculación → OK.
   4. Cursor becomes a ghost (semi-transparent pilar footprint).
   5. Every LEFT CLICK places one identical copy at the snapped position.
-  6. ESC or activating another tool ends the session.
+  6. RIGHT CLICK or ENTER → reopens PilarPropsDialog to change section
+     mid-session (CYPECAD pattern) without going back to the Ribbon.
+  7. ESC fully deactivates the tool and unchecks the Ribbon button.
 """
 from __future__ import annotations
 from typing import Optional
@@ -23,7 +25,7 @@ class PilarTool(BaseTool):
         """
         Args:
             canvas:       The Canvas2D instance.
-            pilar_props:  Dict with keys: ancho, largo, material,
+            pilar_props:  Dict with keys: ancho, largo, angulo, material,
                           nivel_desde_id, nivel_hasta_id,
                           con_vinculacion_exterior.
         """
@@ -39,18 +41,15 @@ class PilarTool(BaseTool):
             self._props["ancho"],
             self._props["largo"],
         )
-        self._canvas.set_status(
-            f"🏛 Pilar {self._props['ancho']*100:.0f}×"
-            f"{self._props['largo']*100:.0f} cm — "
-            "Clic para colocar · ESC para terminar"
-        )
+        self._update_status()
 
     def deactivate(self) -> None:
         remove_ghost_pilar(self.plotter)
         self._ghost_actor = None
-        self._canvas.set_status(
-            f"✔ {self._count} pilar(es) colocado(s)"
-        )
+        if self._count:
+            self._canvas.set_status(
+                f"✔ {self._count} pilar(es) colocado(s)"
+            )
 
     # ------------------------------------------------------------------ events
     def on_mouse_move(self, world_x: float, world_y: float) -> None:
@@ -80,28 +79,55 @@ class PilarTool(BaseTool):
         )
         self.project.add_pilar(pilar)
         self._count += 1
-
-        # Refresh the scene (re-draws all element actors)
         self._refresh()
+        self._update_status()
 
-        # Update status with running count
-        self._canvas.set_status(
-            f"🏛 Pilar {self._props['ancho']*100:.0f}×"
-            f"{self._props['largo']*100:.0f} cm — "
-            f"{self._count} colocado(s) · ESC para terminar"
-        )
+    def on_right_click(self, world_x: float, world_y: float) -> None:
+        """Right-click reopens PilarPropsDialog to change section mid-session."""
+        self._open_props_dialog()
 
     def on_key_press(self, key: str) -> None:
-        if key.lower() == "escape":
+        key_l = key.lower()
+        if key_l in ("return", "enter"):
+            # ENTER also reopens props dialog (CYPECAD pattern)
+            self._open_props_dialog()
+        elif key_l == "escape":
+            # ESC → full deactivation (canvas clears ghost + unchecks ribbon)
             self._canvas.deactivate_tool()
 
-    # ------------------------------------------------------------------ props update
-    def update_props(self, new_props: dict) -> None:
-        """Allow the user to change dimensions mid-session without restarting."""
-        self._props = new_props
-        remove_ghost_pilar(self.plotter)
-        self._ghost_actor = add_ghost_pilar(
-            self.plotter,
-            self._props["ancho"],
-            self._props["largo"],
+    # ------------------------------------------------------------------ internal
+    def _open_props_dialog(self) -> None:
+        """Open PilarPropsDialog pre-filled with current props.
+
+        If accepted, updates internal props and refreshes the ghost to match
+        the new section, without ending the placement session.
+        After the dialog closes, inject fake mouse-release events so the VTK
+        interactor does not perform an unintended zoom/pan on next mouse move.
+        """
+        from badgercad.ui.dialogs.pilar_props import PilarPropsDialog
+
+        dlg = PilarPropsDialog(
+            self._canvas.window(),
+            project=self.project,
+            initial_props=self._props,
+        )
+        if dlg.exec():
+            self._props = dlg.get_props()
+            remove_ghost_pilar(self.plotter)
+            self._ghost_actor = add_ghost_pilar(
+                self.plotter,
+                self._props["ancho"],
+                self._props["largo"],
+            )
+        # Always release stuck mouse state after ANY modal dialog
+        self._canvas.release_mouse_state()
+        self._update_status()
+
+    def _update_status(self) -> None:
+        w = self._props["ancho"] * 100
+        l = self._props["largo"] * 100
+        cnt = f" · {self._count} colocado(s)" if self._count else ""
+        self._canvas.set_status(
+            f"🏛 Pilar {w:.0f}×{l:.0f} cm{cnt} — "
+            "Clic para colocar · Enter/RClick = cambiar sección · ESC = salir"
         )

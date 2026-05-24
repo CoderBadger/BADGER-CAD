@@ -3,9 +3,11 @@
 Workflow:
   1. User activates tool from ribbon.
   2. Each LEFT CLICK adds a vertex; a dynamic preview line follows the cursor.
-  3. ENTER or double-click closes the polygon and opens LosaPropsDialog.
+  3. RIGHT CLICK or ENTER with ≥3 vertices closes the polygon and opens
+     LosaPropsDialog. With <3 vertices, shows a warning in the status bar.
   4. On dialog accept, the Losa is added to the active Grupo.
-  5. ESC cancels without saving.
+  5. ESC cancels any in-progress polygon, clears ghosts and FULLY deactivates
+     the tool (returns to neutral state, unchecks ribbon button).
 """
 from __future__ import annotations
 from typing import List, Optional, Tuple
@@ -27,12 +29,17 @@ class LosaTool(BaseTool):
     def activate(self) -> None:
         self._vertices.clear()
         self._canvas.set_status(
-            "▭ Losa — Clic para añadir vértices · ENTER para cerrar · ESC para cancelar"
+            "▭ Losa — Clic para añadir vértices · "
+            "RClick/Enter = cerrar · ESC = salir"
         )
 
     def deactivate(self) -> None:
+        """Clean up: always remove the ghost and reset vertex list."""
         self._vertices.clear()
-        self.plotter.remove_actor("ghost_losa_line")
+        try:
+            self.plotter.remove_actor("ghost_losa_line")
+        except Exception:
+            pass  # safe – actor may not exist yet
 
     # ------------------------------------------------------------------ events
     def on_mouse_move(self, world_x: float, world_y: float) -> None:
@@ -49,35 +56,54 @@ class LosaTool(BaseTool):
         self._vertices.append((sx, sy))
         add_ghost_losa_line(self.plotter, self._vertices)
         self.plotter.render()
+        n = len(self._vertices)
         self._canvas.set_status(
-            f"▭ Losa — {len(self._vertices)} vértice(s) · "
-            "ENTER para cerrar · ESC para cancelar"
+            f"▭ Losa — {n} vértice(s) · "
+            "RClick/Enter = cerrar · ESC = salir"
         )
 
+    def on_right_click(self, world_x: float, world_y: float) -> None:
+        """Right-click closes the polygon (same as ENTER)."""
+        self._try_close_polygon()
+
     def on_key_press(self, key: str) -> None:
-        if key.lower() in ("return", "enter"):
-            self._close_polygon()
-        elif key.lower() == "escape":
+        key_l = key.lower()
+        if key_l in ("return", "enter"):
+            self._try_close_polygon()
+        elif key_l == "escape":
+            # ESC: abort polygon in progress and FULLY deactivate
+            # deactivate() handles cleanup; canvas clears the tool reference
+            # and emits tool_deactivated so the ribbon unchecks the button.
             self._canvas.deactivate_tool()
 
     # ------------------------------------------------------------------ internal
-    def _close_polygon(self) -> None:
+    def _try_close_polygon(self) -> None:
+        """Attempt to close the current polygon.
+
+        Requires ≥3 vertices. Shows warning in status bar if not met.
+        After dialog accept the tool resets for a new polygon WITHOUT
+        deactivating — the user can draw the next slab immediately.
+        After dialog cancel or insufficient vertices, the tool stays active.
+        """
         if len(self._vertices) < 3:
             self._canvas.set_status(
                 "⚠ Se necesitan al menos 3 vértices para cerrar la losa."
             )
             return
 
-        # Ask for slab properties via dialog
+        # Snapshot vertices before any dialog interaction
+        verts_snapshot = list(self._vertices)
+
+        # Open properties dialog
         from badgercad.ui.dialogs.losa_props import LosaPropsDialog
         dlg = LosaPropsDialog(
-            self._canvas,
+            self._canvas.window(),
             grupo_activo=self.project.grupo_activo,
         )
         if dlg.exec():
             props = dlg.get_props()
             losa = Losa(
-                vertices=list(self._vertices),
+                vertices=verts_snapshot,
                 tipo=props["tipo"],
                 espesor=props["espesor"],
                 grupo_id=props["grupo_id"],
@@ -85,9 +111,13 @@ class LosaTool(BaseTool):
             self.project.add_losa(losa)
             self._refresh()
 
-        # Reset for next polygon
+        # Reset for next polygon WITHOUT deactivating the tool
         self._vertices.clear()
-        self.plotter.remove_actor("ghost_losa_line")
+        try:
+            self.plotter.remove_actor("ghost_losa_line")
+        except Exception:
+            pass
         self._canvas.set_status(
-            "▭ Losa — Clic para añadir vértices · ENTER para cerrar · ESC para cancelar"
+            "▭ Losa — Clic para añadir vértices · "
+            "RClick/Enter = cerrar · ESC = salir"
         )
