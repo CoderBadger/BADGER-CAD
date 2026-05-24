@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
         self.setStyleSheet(_APP_STYLE)
 
+        self._viewer_3d: Optional["Viewer3D"] = None   # singleton — see _open_3d_viewer
         self._build_ui()
         self._connect_signals()
 
@@ -149,8 +150,24 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ dialogs
     def _open_3d_viewer(self) -> None:
-        viewer = Viewer3D(self.project, self)
-        viewer.show()
+        """Open (or refresh) the 3D perspective viewer.
+
+        Singleton pattern: we keep one ``Viewer3D`` instance alive for the
+        lifetime of the main window.  If the viewer is already visible we
+        simply re-render the latest model and bring it to the front — no new
+        OpenGL context, no re-upload of unchanged geometry.
+        If the user had previously closed the dialog (isVisible() == False),
+        we create a fresh instance (the old plotter was closed by closeEvent).
+        """
+        from badgercad.ui.viewer_3d import Viewer3D
+        if self._viewer_3d is None or not self._viewer_3d.isVisible():
+            self._viewer_3d = Viewer3D(self.project, parent=self)
+        else:
+            # Already open — refresh to show any model changes
+            self._viewer_3d._render()
+        self._viewer_3d.show()
+        self._viewer_3d.raise_()
+        self._viewer_3d.activateWindow()
 
     def _open_nivel_manager(self) -> None:
         from badgercad.ui.dialogs.nivel_manager import NivelManagerDialog

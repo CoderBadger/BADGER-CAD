@@ -220,13 +220,56 @@ def add_ghost_losa_line(plotter: "QtInteractor",
     )
 
 
+def _structural_bounds(project: "Project") -> tuple[float, float, float, float]:
+    """Compute (cx, cy, half_x, half_y) of the structural elements.
+
+    Used to size ghost floor planes so they do not bloat the camera
+    bounding box beyond the actual structure footprint.
+    Falls back to a 10 m half-extent if the project has no elements.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    for p in project.pilares:
+        xs.append(p.x)
+        ys.append(p.y)
+
+    for lo in project.losas:
+        for vx, vy in lo.vertices:
+            xs.append(vx)
+            ys.append(vy)
+
+    if not xs:
+        return 0.0, 0.0, 10.0, 10.0
+
+    margin = 3.0
+    cx  = (min(xs) + max(xs)) / 2
+    cy  = (min(ys) + max(ys)) / 2
+    hx  = (max(xs) - min(xs)) / 2 + margin
+    hy  = (max(ys) - min(ys)) / 2 + margin
+    return cx, cy, hx, hy
+
+
 # ================================================================== 3D viewer
 def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
-    """Build the full 3D perspective model (all groups and levels)."""
+    """Build the full 3D perspective model (all groups and levels).
+
+    Camera framing strategy
+    -----------------------
+    ``reset_camera()`` is called **after** structural actors (pilares + losas)
+    but **before** ghost floor planes and axes.  This ensures the camera fits
+    the actual structure, not the decorative 60×60 m planes that would
+    otherwise push the framing 3–4× too far out.
+
+    Floor planes are additionally sized to the structural footprint + 3 m
+    margin (instead of a fixed 60 m), so even if PyVista ever resets the
+    camera automatically, the planes will not balloon the bounding box.
+    """
     plotter.clear()
     plotter.set_background("#0D1117", top="#1A2A3A")
 
-    # --- Pilares 3D ------------------------------------------------
+    # ── 1. Structural elements ────────────────────────────────────────────
+    # --- Pilares 3D --------------------------------------------------
     for pilar in project.pilares:
         nd = project.get_nivel_by_id(pilar.nivel_desde_id)
         nh = project.get_nivel_by_id(pilar.nivel_hasta_id)
@@ -234,42 +277,39 @@ def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
             continue
         mesh  = _pilar_box_3d(pilar, nd.cota, nh.cota)
         color = PILAR_VIN_COLOR if pilar.con_vinculacion_exterior else PILAR_SIN_COLOR
-        plotter.add_mesh(
-            mesh, color=color, show_edges=True,
-            edge_color=PILAR_EDGE_COLOR, line_width=1.0,
-            name=f"p3d_{pilar.id}",
-        )
+        plotter.add_mesh(mesh, color=color, show_edges=True,
+                         edge_color=PILAR_EDGE_COLOR, line_width=1.0,
+                         name=f"p3d_{pilar.id}")
 
     # --- Losas 3D --------------------------------------------------
-    # Each grupo may span multiple niveles; render the slab at every nivel
-    # it belongs to so repeated floors are visible.
     for grupo in project.grupos:
-        niveles_del_grupo = [
-            project.get_nivel_by_id(nid)
-            for nid in grupo.nivel_ids
-        ]
-        niveles_del_grupo = [nv for nv in niveles_del_grupo if nv is not None]
-
-        for nivel_rep in niveles_del_grupo:
+        niveles_del_grupo = [project.get_nivel_by_id(nid) for nid in grupo.nivel_ids]
+        for nivel_rep in (nv for nv in niveles_del_grupo if nv is not None):
             z_top = nivel_rep.cota
             for losa in project.get_losas_en_grupo(grupo.id):
                 mesh = _losa_solid_3d(losa, z_top=z_top)
                 if mesh is not None:
                     plotter.add_mesh(
-                        mesh,
-                        color=LOSA_COLOR, opacity=0.70,
+                        mesh, color=LOSA_COLOR, opacity=0.70,
                         show_edges=True, edge_color=LOSA_EDGE_COLOR, line_width=0.8,
                         name=f"l3d_{losa.id}_{nivel_rep.id}",
                     )
 
-    # --- Level planes (ghost floors) --------------------------------
+    # ── 2. Fit camera to structural extent (BEFORE decorative elements) ───
+    plotter.reset_camera()
+
+    # ── 3. Decorative elements (do not affect camera framing) ─────────────
+    cx, cy, hx, hy = _structural_bounds(project)
+    ix = max(hx * 2, 4.0)   # floor plane width  (at least 4 m)
+    iy = max(hy * 2, 4.0)   # floor plane height (at least 4 m)
+
     for nivel in project.niveles_ordenados()[1:]:
         plane = pv.Plane(
-            center=(0, 0, nivel.cota),
+            center=(cx, cy, nivel.cota),
             direction=(0, 0, 1),
-            i_size=60, j_size=60,
+            i_size=ix, j_size=iy,
         )
-        plotter.add_mesh(plane, color="#1A2A3A", opacity=0.12, name=f"floor_{nivel.id}")
+        plotter.add_mesh(plane, color="#1A2A3A", opacity=0.12,
+                         name=f"floor_{nivel.id}")
 
     plotter.add_axes(color="white")
-    plotter.reset_camera()

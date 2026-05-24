@@ -22,6 +22,16 @@ from badgercad.ui.main_window import MainWindow
 
 
 def main() -> None:
+    # Silence verbose VTK C++ warnings (e.g. "Resetting view-up since view plane
+    # normal is parallel" from the terrain camera hitting a degenerate angle).
+    # These are expected singularities, not bugs; suppressing them keeps the
+    # console clean without hiding real Python-level errors.
+    try:
+        from vtkmodules.vtkCommonCore import vtkObject as _vtkObj
+        _vtkObj.GlobalWarningDisplayOff()
+    except (ImportError, AttributeError):
+        pass  # VTK not available or API changed — not critical
+
     # Configure PyVista for off-screen / Qt integration
     pv.set_plot_theme("dark")
 

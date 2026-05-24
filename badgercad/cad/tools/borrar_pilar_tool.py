@@ -59,33 +59,24 @@ class BorrarPilarTool(BaseTool):
         try:
             return self._find_pilar_shapely(wx, wy)
         except ImportError:
-            return self._find_pilar_distance(wx, wy)
+            return self._find_pilar_distance_fallback(wx, wy)
 
     def _find_pilar_shapely(self, wx: float, wy: float):
-        """Shapely-based hit test (supports rotation)."""
-        from shapely.geometry import Point
-        from shapely.geometry import box as shapely_box
-        from shapely.affinity import rotate as shapely_rotate, translate
+        """Shapely-based hit test using pilar.footprint_2d() (supports rotation)."""
+        from shapely.geometry import Point, Polygon
 
         click_pt = Point(wx, wy)
-
         for pilar in self.project.pilares:
-            a, l = pilar.ancho / 2, pilar.largo / 2
-            footprint = shapely_box(-a, -l, a, l)
-            if pilar.angulo:
-                footprint = shapely_rotate(footprint, -pilar.angulo, origin=(0, 0))
-            footprint = translate(footprint, pilar.x, pilar.y)
-            # Distance ≤ 0 means the point is inside; ≤ tolerance catches
-            # near-misses when the user clicks just outside the edge.
+            footprint = Polygon(pilar.footprint_2d())
             if footprint.distance(click_pt) <= _HIT_TOLERANCE:
                 return pilar
         return None
 
     def _find_pilar_distance_fallback(self, wx: float, wy: float):
-        """Simple Euclidean distance fallback (ignores rotation)."""
+        """Simple AABB-based fallback (ignores rotation)."""
         for pilar in self.project.pilares:
-            r = max(pilar.ancho, pilar.largo) / 2 + _HIT_TOLERANCE
-            dist = ((wx - pilar.x) ** 2 + (wy - pilar.y) ** 2) ** 0.5
-            if dist <= r:
+            xmin, xmax, ymin, ymax = pilar.bounds_2d()
+            pad = _HIT_TOLERANCE
+            if xmin - pad <= wx <= xmax + pad and ymin - pad <= wy <= ymax + pad:
                 return pilar
         return None
