@@ -15,6 +15,7 @@ from badgercad.ui.ribbon import Ribbon
 from badgercad.ui.canvas_2d import Canvas2D
 from badgercad.ui.panels.nivel_panel import NivelPanel
 from badgercad.ui.viewer_3d import Viewer3D
+from badgercad.cad.tools.viga_tool import VigaTool
 
 _APP_STYLE = """
 QMainWindow { background: #0D1117; }
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
         # Ribbon → tools
         self._ribbon.tool_pilar_requested.connect(self._activate_pilar_tool)
         self._ribbon.tool_borrar_pilar_requested.connect(self._activate_borrar_pilar_tool)
+        self._ribbon.tool_viga_requested.connect(self._activate_viga_tool)
         self._ribbon.tool_losa_requested.connect(self._activate_losa_tool)
         self._ribbon.vista_3d_requested.connect(self._open_3d_viewer)
         self._ribbon.gestionar_plantas.connect(self._open_nivel_manager)
@@ -108,6 +110,12 @@ class MainWindow(QMainWindow):
         self._ribbon.nuevo_proyecto.connect(self._nuevo_proyecto)
         self._ribbon.esc_tool.connect(self._canvas.deactivate_tool)
         self._ribbon.esc_tool.connect(self._ribbon.uncheck_all_tools)
+        
+        # MEF results
+        self._ribbon.calcular_requested.connect(self._on_calcular)
+        self._ribbon.ver_deformada_requested.connect(self._on_ver_deformada)
+        self._ribbon.ver_esfuerzos_mxx_requested.connect(self._on_ver_esfuerzos_mxx)
+        self._ribbon.ver_esfuerzos_myy_requested.connect(self._on_ver_esfuerzos_myy)
 
         # Canvas → status bar
         self._canvas.mouse_moved.connect(self._on_mouse_moved)
@@ -140,8 +148,10 @@ class MainWindow(QMainWindow):
 
     def _activate_borrar_pilar_tool(self) -> None:
         from badgercad.cad.tools.borrar_pilar_tool import BorrarPilarTool
-        tool = BorrarPilarTool(self._canvas)
-        self._canvas.set_tool(tool)
+        self._canvas.set_tool(BorrarPilarTool(self._canvas))
+
+    def _activate_viga_tool(self) -> None:
+        self._canvas.set_tool(VigaTool(self._canvas))
 
     def _activate_losa_tool(self) -> None:
         from badgercad.cad.tools.losa_tool import LosaTool
@@ -191,6 +201,90 @@ class MainWindow(QMainWindow):
             self._canvas.deactivate_tool()
             self.project.reset()
             self._canvas.refresh_scene()
+            self._ribbon.set_resultados_enabled(False)
+            
+    # ------------------------------------------------------------------ MEF calculation
+    def _on_calcular(self) -> None:
+        grupo = self.project.grupo_activo
+        if not grupo:
+            QMessageBox.warning(self, "Sin grupo activo", "Selecciona una planta/grupo activo para calcular.")
+            return
+            
+        losas = self.project.get_losas_en_grupo(grupo.id)
+        if not losas:
+            QMessageBox.warning(self, "Sin losas", f"No hay losas en el grupo '{grupo.nombre}' para calcular.")
+            return
+            
+        # UI Feedback
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self._canvas.set_status("Calculando MEF...")
+        QApplication.processEvents()
+        
+        try:
+            from badgercad.mef.mesher import mesh_losa
+            from badgercad.mef.solver import resolver_losa
+            
+            combined_results = {
+                "mesh": {"nodes": {}, "elements": {}},
+                "displacements": {},
+                "forces_mxx": {},
+                "forces_myy": {}
+            }
+            
+            offset = 0
+            # Get pillars for boundary conditions
+            pilares = self.project.pilares
+            
+            for losa in losas:
+                mesh = mesh_losa(losa, target_size=0.50)
+                res = resolver_losa(losa, mesh, pilares, carga_qz=10000.0)
+                
+                for tag, coords in mesh["nodes"].items():
+                    combined_results["mesh"]["nodes"][tag + offset] = coords
+                for tag, n_tags in mesh["elements"].items():
+                    combined_results["mesh"]["elements"][tag + offset] = [nt + offset for nt in n_tags]
+                    
+                for tag, dz in res["displacements"].items():
+                    combined_results["displacements"][tag + offset] = dz
+                for tag, mxx in res["forces_mxx"].items():
+                    combined_results["forces_mxx"][tag + offset] = mxx
+                for tag, myy in res["forces_myy"].items():
+                    combined_results["forces_myy"][tag + offset] = myy
+                    
+                offset += 1000000
+                
+            self.project.mef_results = combined_results
+            self._ribbon.set_resultados_enabled(True)
+            self._canvas.set_status("Cálculo finalizado con éxito.")
+            QMessageBox.information(self, "Cálculo Exitoso", "Análisis MEF completado. Usa la pestaña Resultados para visualizar.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error en MEF", f"Ocurrió un error en el cálculo:\n{str(e)}")
+            self._canvas.set_status("Error en cálculo MEF.")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _on_ver_deformada(self) -> None:
+        self._show_mef("Desplazamientos")
+        
+    def _on_ver_esfuerzos_mxx(self) -> None:
+        self._show_mef("Esfuerzos Mxx")
+        
+    def _on_ver_esfuerzos_myy(self) -> None:
+        self._show_mef("Esfuerzos Myy")
+        
+    def _show_mef(self, field: str) -> None:
+        if not hasattr(self.project, "mef_results") or not self.project.mef_results:
+            return
+        
+        from badgercad.ui.viewer_3d import Viewer3D
+        if self._viewer_3d is None or not self._viewer_3d.isVisible():
+            self._viewer_3d = Viewer3D(self.project, parent=self)
+            
+        self._viewer_3d.show_mef_results(self.project.mef_results, active_field=field)
+        self._viewer_3d.show()
+        self._viewer_3d.raise_()
+        self._viewer_3d.activateWindow()
 
     # ------------------------------------------------------------------ status bar
     def _on_mouse_moved(self, wx: float, wy: float) -> None:

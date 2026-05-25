@@ -235,6 +235,12 @@ class Viewer3D(QDialog):
         self.plotter.enable_terrain_style()
         self.plotter.render()
 
+    def show_mef_results(self, mef_results: dict, active_field: str) -> None:
+        """Render FEA results instead of the standard CAD model."""
+        from badgercad.render.scene import render_mef_results
+        render_mef_results(self.plotter, self.project, mef_results, active_field)
+        self.plotter.render()
+
     # ------------------------------------------------------------------ cleanup
     def closeEvent(self, event) -> None:  # noqa: N802
         self.plotter.close()

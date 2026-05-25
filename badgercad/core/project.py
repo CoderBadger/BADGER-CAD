@@ -43,7 +43,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from .elements.nivel import Nivel
 from .elements.grupo import Grupo
 from .elements.pilar import Pilar
-from .elements.losa import Losa
+from .elements.losa  import Losa
+from .elements.viga  import Viga
 
 # Module-level singleton reference
 _project_instance: Optional["Project"] = None
@@ -86,6 +87,7 @@ class Project(QObject):
     niveles_changed      = pyqtSignal()
     pilares_changed      = pyqtSignal()
     losas_changed        = pyqtSignal()
+    vigas_changed        = pyqtSignal()
     nivel_activo_changed = pyqtSignal()
     project_reset        = pyqtSignal()
 
@@ -101,6 +103,7 @@ class Project(QObject):
         self.grupos:  List[Grupo] = []
         self.pilares: List[Pilar] = []
         self.losas:   List[Losa]  = []
+        self.vigas:   List[Viga]  = []
 
         self._nivel_activo: Optional[Nivel] = None
         self._grupo_activo: Optional[Grupo] = None
@@ -317,6 +320,43 @@ class Project(QObject):
                 g.losa_ids.remove(losa_id)
         self.losas_changed.emit()
 
+    def add_viga(self, viga: Viga) -> None:
+        """Add a beam to the project and register it in its parent Group.
+
+        Emits ``vigas_changed``.
+
+        Args:
+            viga: A fully initialised ``Viga`` with a valid ``grupo_id``.
+        """
+        self.vigas.append(viga)
+        grupo = self.get_grupo_by_id(viga.grupo_id)
+        if grupo and viga.id not in grupo.viga_ids:
+            grupo.viga_ids.append(viga.id)
+        self._push_undo(('viga_added', viga.id))
+        self.vigas_changed.emit()
+
+    def remove_viga(self, viga_id: str, record: bool = True) -> None:
+        """Remove a beam and deregister it from its parent Group.
+
+        Emits ``vigas_changed``.
+
+        Args:
+            viga_id: ID of the beam to remove.
+            record:  If ``True``, push an undo record.
+        """
+        viga = next((v for v in self.vigas if v.id == viga_id), None)
+        if viga and record:
+            self._push_undo(('viga_removed', viga))
+        self.vigas = [v for v in self.vigas if v.id != viga_id]
+        for g in self.grupos:
+            if viga_id in g.viga_ids:
+                g.viga_ids.remove(viga_id)
+        self.vigas_changed.emit()
+
+    def get_vigas_en_grupo(self, grupo_id: str) -> List[Viga]:
+        """Return all beams belonging to a given functional group."""
+        return [v for v in self.vigas if v.grupo_id == grupo_id]
+
     def add_nivel(self, nivel: Nivel) -> None:
         """Add a floor level and keep the list sorted by cota.
 
@@ -361,6 +401,7 @@ class Project(QObject):
         self.grupos.clear()
         self.pilares.clear()
         self.losas.clear()
+        self.vigas.clear()
         self._nivel_activo = None
         self._grupo_activo = None
         self.clear_undo()
@@ -369,6 +410,7 @@ class Project(QObject):
         self.niveles_changed.emit()
         self.pilares_changed.emit()
         self.losas_changed.emit()
+        self.vigas_changed.emit()
 
     # ------------------------------------------------------------------ undo
     def _push_undo(self, cmd: tuple) -> None:
@@ -407,6 +449,20 @@ class Project(QObject):
             pilar = cmd[1]
             self.pilares.append(pilar)
             self.pilares_changed.emit()
+        elif action == 'viga_added':
+            viga_id = cmd[1]
+            self.vigas = [v for v in self.vigas if v.id != viga_id]
+            for g in self.grupos:
+                if viga_id in g.viga_ids:
+                    g.viga_ids.remove(viga_id)
+            self.vigas_changed.emit()
+        elif action == 'viga_removed':
+            viga = cmd[1]
+            self.vigas.append(viga)
+            grupo = self.get_grupo_by_id(viga.grupo_id)
+            if grupo and viga.id not in grupo.viga_ids:
+                grupo.viga_ids.append(viga.id)
+            self.vigas_changed.emit()
         return True
 
     def clear_undo(self) -> None:
@@ -437,6 +493,7 @@ class Project(QObject):
             "grupos":  len(self.grupos),
             "pilares": len(self.pilares),
             "losas":   len(self.losas),
+            "vigas":   len(self.vigas),
         }
 
 

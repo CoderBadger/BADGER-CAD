@@ -156,6 +156,7 @@ class Ribbon(QWidget):
 
     tool_pilar_requested        = pyqtSignal()
     tool_borrar_pilar_requested = pyqtSignal()
+    tool_viga_requested         = pyqtSignal()
     tool_losa_requested         = pyqtSignal()
     vista_3d_requested          = pyqtSignal()
     gestionar_plantas           = pyqtSignal()
@@ -163,6 +164,10 @@ class Ribbon(QWidget):
     grid_spacing_changed        = pyqtSignal(float)
     nuevo_proyecto              = pyqtSignal()
     esc_tool                    = pyqtSignal()
+    calcular_requested          = pyqtSignal()
+    ver_deformada_requested     = pyqtSignal()
+    ver_esfuerzos_mxx_requested = pyqtSignal()
+    ver_esfuerzos_myy_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -189,6 +194,11 @@ class Ribbon(QWidget):
         self._tabs.addTab(self._tab_vigas(),   "Vigas")
         self._tabs.addTab(self._tab_cargas(),  "Cargas")
         self._tabs.addTab(self._tab_calcular(),"Calcular")
+        
+        # Resultados tab initially disabled
+        self._tab_resultados_widget = self._tab_resultados()
+        self._tabs.addTab(self._tab_resultados_widget, "Resultados")
+        self._tabs.setTabEnabled(self._tabs.count() - 1, False)
 
     # ------------------------------------------------------------------ tabs
     def _tab_inicio(self) -> QWidget:
@@ -285,22 +295,13 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        # Losa tool is DISABLED for Hito 1.
-        # In CYPECAD, slabs are created by clicking inside closed bays defined
-        # by beams — not by free polygon drawing.  Hito 2 will introduce the
-        # Viga tool and Shapely bay-detection before re-enabling this.
-        self._btn_losa = _tool_btn("▭", "Dibujar\nLosa",
-                                   "Disponible en Hito 2 (requiere vigas para"
-                                   " delimitar recintos cerrados)",
+        self._btn_losa = _tool_btn("▭", "Inyectar\nLosa",
+                                   "Crear losa haciendo clic en un paño cerrado",
                                    checkable=True)
-        self._btn_losa.setEnabled(False)
-        self._btn_losa.setToolTip(
-            "Las losas se crean haciendo clic dentro de recintos\n"
-            "cerrados por vigas (flujo CYPECAD).\n"
-            "Disponible en Hito 2."
-        )
+        self._btn_losa.clicked.connect(self._on_losa_clicked)
+        self._btn_losa.setEnabled(True)
 
-        note = QLabel("  ⓘ  Las losas se habilitarán en el Hito 2 (tras definir vigas).")
+        note = QLabel("  ⓘ  Haga clic dentro de recintos cerrados por vigas.")
         note.setStyleSheet("color:#4A5A6A;font-size:11px;")
 
         lay.addWidget(_group_widget("Losas", [self._btn_losa]))
@@ -312,9 +313,22 @@ class Ribbon(QWidget):
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(12, 0, 12, 0)
-        lbl = QLabel("🔧  Herramientas de Vigas — disponibles en Hito 2")
-        lbl.setStyleSheet("color:#4A5A6A;font-size:12px;")
-        lay.addWidget(lbl)
+        lay.setSpacing(0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        
+        self._btn_viga = _tool_btn("📏", "Dibujar\nViga",
+                                   "Trazado continuo de vigas (se ancla a pilares)",
+                                   checkable=True)
+        self._btn_viga.clicked.connect(self._on_viga_clicked)
+        
+        lay.addWidget(_group_widget("Vigas", [self._btn_viga]))
+        
+        self._btn_esc_v = _tool_btn("✕", "ESC / Fin",
+                                    "Terminar herramienta activa")
+        self._btn_esc_v.clicked.connect(self.esc_tool)
+        lay.addWidget(_group_widget("Control", [self._btn_esc_v]))
+        
+        lay.addStretch()
         return w
 
     def _tab_cargas(self) -> QWidget:
@@ -330,15 +344,41 @@ class Ribbon(QWidget):
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(12, 0, 12, 0)
-        lbl = QLabel("⚡  Solver MEF (OpenSeesPy + Gmsh) — disponible en Hito 2")
-        lbl.setStyleSheet("color:#4A5A6A;font-size:12px;")
-        lay.addWidget(lbl)
+        lay.setSpacing(0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        
+        self._btn_calcular = _tool_btn("▶", "Calcular", "Ejecutar análisis MEF (Gravedad)")
+        self._btn_calcular.clicked.connect(self.calcular_requested)
+        lay.addWidget(_group_widget("Solver", [self._btn_calcular]))
+        
+        lay.addStretch()
+        return w
+
+    def _tab_resultados(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(12, 0, 12, 0)
+        lay.setSpacing(0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        
+        self._btn_deformada = _tool_btn("🌊", "Ver\nDeformada", "Mapa de Desplazamientos Z")
+        self._btn_deformada.clicked.connect(self.ver_deformada_requested)
+        
+        self._btn_mxx = _tool_btn("💥", "Esfuerzos\nMxx", "Momentos Flectores X")
+        self._btn_mxx.clicked.connect(self.ver_esfuerzos_mxx_requested)
+        
+        self._btn_myy = _tool_btn("💥", "Esfuerzos\nMyy", "Momentos Flectores Y")
+        self._btn_myy.clicked.connect(self.ver_esfuerzos_myy_requested)
+        
+        lay.addWidget(_group_widget("Visualización 3D", [self._btn_deformada, self._btn_mxx, self._btn_myy]))
+        lay.addStretch()
         return w
 
     # ------------------------------------------------------------------ handlers
     def _on_pilar_clicked(self) -> None:
         self._btn_losa.setChecked(False)
         self._btn_borrar_pilar.setChecked(False)
+        self._btn_viga.setChecked(False)
         if self._btn_pilar.isChecked():
             self.tool_pilar_requested.emit()
         else:
@@ -347,14 +387,25 @@ class Ribbon(QWidget):
     def _on_borrar_pilar_clicked(self) -> None:
         self._btn_pilar.setChecked(False)
         self._btn_losa.setChecked(False)
+        self._btn_viga.setChecked(False)
         if self._btn_borrar_pilar.isChecked():
             self.tool_borrar_pilar_requested.emit()
+        else:
+            self.esc_tool.emit()
+
+    def _on_viga_clicked(self) -> None:
+        self._btn_pilar.setChecked(False)
+        self._btn_borrar_pilar.setChecked(False)
+        self._btn_losa.setChecked(False)
+        if self._btn_viga.isChecked():
+            self.tool_viga_requested.emit()
         else:
             self.esc_tool.emit()
 
     def _on_losa_clicked(self) -> None:
         self._btn_pilar.setChecked(False)
         self._btn_borrar_pilar.setChecked(False)
+        self._btn_viga.setChecked(False)
         if self._btn_losa.isChecked():
             self.tool_losa_requested.emit()
         else:
@@ -365,9 +416,17 @@ class Ribbon(QWidget):
         val = float(txt.split()[0])
         self.grid_spacing_changed.emit(val)
 
+    # ------------------------------------------------------------------ API
+    def set_resultados_enabled(self, enabled: bool) -> None:
+        idx = self._tabs.count() - 1
+        self._tabs.setTabEnabled(idx, enabled)
+        if enabled:
+            self._tabs.setCurrentIndex(idx)
+
     # ------------------------------------------------------------------ public
     def uncheck_all_tools(self) -> None:
         """Called when ESC or deactivate_tool fires."""
         self._btn_pilar.setChecked(False)
         self._btn_losa.setChecked(False)
         self._btn_borrar_pilar.setChecked(False)
+        self._btn_viga.setChecked(False)

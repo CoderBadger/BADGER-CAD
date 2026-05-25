@@ -1,123 +1,101 @@
-"""losa_tool.py — Polygonal slab drawing tool.
+"""losa_tool.py — Slab insertion tool (Hito 2 version).
 
 Workflow:
   1. User activates tool from ribbon.
-  2. Each LEFT CLICK adds a vertex; a dynamic preview line follows the cursor.
-  3. RIGHT CLICK or ENTER with ≥3 vertices closes the polygon and opens
-     LosaPropsDialog. With <3 vertices, shows a warning in the status bar.
-  4. On dialog accept, the Losa is added to the active Grupo.
-  5. ESC cancels any in-progress polygon, clears ghosts and FULLY deactivates
-     the tool (returns to neutral state, unchecks ribbon button).
+  2. LEFT CLICK inside a closed bay (paño).
+  3. Tool detects the bay using topology.panio_at_point.
+  4. Opens LosaPropsDialog.
+  5. On accept, Losa is created matching the exact bay geometry.
+  6. ESC fully deactivates the tool.
 """
 from __future__ import annotations
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from .base_tool import BaseTool
 from badgercad.core.elements.losa import Losa
-from badgercad.render.scene import add_ghost_losa_line
+from badgercad.core.topology import detect_panios, panio_at_point, polygon_to_vertices
 
 
 class LosaTool(BaseTool):
-    """Draw a slab polygon vertex-by-vertex."""
+    """Inject a slab into a closed beam bay."""
 
     def __init__(self, canvas) -> None:
         super().__init__(canvas)
-        self._vertices: List[Tuple[float, float]] = []
-        self._cursor_pos: Tuple[float, float] = (0.0, 0.0)
+        self._current_props = {
+            "tipo": "Maciza",
+            "espesor": 0.20,
+            "grupo_id": ""
+        }
 
     # ------------------------------------------------------------------ lifecycle
     def activate(self) -> None:
-        self._vertices.clear()
-        self._canvas.set_status(
-            "▭ Losa — Clic para añadir vértices · "
-            "RClick/Enter = cerrar · ESC = salir"
-        )
-
-    def deactivate(self) -> None:
-        """Clean up: always remove the ghost and reset vertex list."""
-        self._vertices.clear()
-        try:
-            self.plotter.remove_actor("ghost_losa_line")
-        except Exception:
-            pass  # safe – actor may not exist yet
-
-    # ------------------------------------------------------------------ events
-    def on_mouse_move(self, world_x: float, world_y: float) -> None:
-        sx, sy = self._snap(world_x, world_y)
-        self._cursor_pos = (sx, sy)
-        if self._vertices:
-            add_ghost_losa_line(
-                self.plotter, self._vertices, preview_end=(sx, sy)
-            )
-            self.plotter.render()
-
-    def on_left_click(self, world_x: float, world_y: float) -> None:
-        sx, sy = self._snap(world_x, world_y)
-        self._vertices.append((sx, sy))
-        add_ghost_losa_line(self.plotter, self._vertices)
-        self.plotter.render()
-        n = len(self._vertices)
-        self._canvas.set_status(
-            f"▭ Losa — {n} vértice(s) · "
-            "RClick/Enter = cerrar · ESC = salir"
-        )
-
-    def on_right_click(self, world_x: float, world_y: float) -> None:
-        """Right-click closes the polygon (same as ENTER)."""
-        self._try_close_polygon()
-
-    def on_key_press(self, key: str) -> None:
-        key_l = key.lower()
-        if key_l in ("return", "enter"):
-            self._try_close_polygon()
-        elif key_l == "escape":
-            # ESC: abort polygon in progress and FULLY deactivate
-            # deactivate() handles cleanup; canvas clears the tool reference
-            # and emits tool_deactivated so the ribbon unchecks the button.
+        if self.project.grupo_activo:
+            self._current_props["grupo_id"] = self.project.grupo_activo.id
+        
+        if not self._open_props_dialog():
             self._canvas.deactivate_tool()
-
-    # ------------------------------------------------------------------ internal
-    def _try_close_polygon(self) -> None:
-        """Attempt to close the current polygon.
-
-        Requires ≥3 vertices. Shows warning in status bar if not met.
-        After dialog accept the tool resets for a new polygon WITHOUT
-        deactivating — the user can draw the next slab immediately.
-        After dialog cancel or insufficient vertices, the tool stays active.
-        """
-        if len(self._vertices) < 3:
-            self._canvas.set_status(
-                "⚠ Se necesitan al menos 3 vértices para cerrar la losa."
-            )
             return
+            
+        self._canvas.set_status(
+            "▭ Losa — Clic dentro de recintos para inyectar · RClick = Propiedades · ESC = salir"
+        )
 
-        # Snapshot vertices before any dialog interaction
-        verts_snapshot = list(self._vertices)
-
-        # Open properties dialog
+    def _open_props_dialog(self) -> bool:
         from badgercad.ui.dialogs.losa_props import LosaPropsDialog
         dlg = LosaPropsDialog(
             self._canvas.window(),
             grupo_activo=self.project.grupo_activo,
         )
         if dlg.exec():
-            props = dlg.get_props()
-            losa = Losa(
-                vertices=verts_snapshot,
-                tipo=props["tipo"],
-                espesor=props["espesor"],
-                grupo_id=props["grupo_id"],
-            )
-            self.project.add_losa(losa)
-            self._refresh()
+            self._current_props = dlg.get_props()
+            self._canvas.release_mouse_state()
+            return True
+        self._canvas.release_mouse_state()
+        return False
 
-        # Reset for next polygon WITHOUT deactivating the tool
-        self._vertices.clear()
-        try:
-            self.plotter.remove_actor("ghost_losa_line")
-        except Exception:
-            pass
-        self._canvas.set_status(
-            "▭ Losa — Clic para añadir vértices · "
-            "RClick/Enter = cerrar · ESC = salir"
+    def deactivate(self) -> None:
+        pass
+
+    # ------------------------------------------------------------------ events
+    def on_mouse_move(self, world_x: float, world_y: float) -> None:
+        # No dynamic preview needed for Hito 2 Losa click-in-bay
+        pass
+
+    def on_left_click(self, world_x: float, world_y: float) -> None:
+        if self.project.grupo_activo is None:
+            self._canvas.set_status("⚠ Active un Nivel/Grupo primero.")
+            return
+
+        vigas = self.project.get_vigas_en_grupo(self.project.grupo_activo.id)
+        panios = detect_panios(vigas)
+        
+        # Check if click is inside any panio
+        panio = panio_at_point(panios, world_x, world_y)
+        if panio is None:
+            self._canvas.set_status("⚠ Haga clic DENTRO de un paño cerrado por vigas.")
+            return
+
+        # Found a panio, extract vertices
+        verts = polygon_to_vertices(panio)
+
+        # Inject immediately
+        losa = Losa(
+            vertices=verts,
+            tipo=self._current_props["tipo"],
+            espesor=self._current_props["espesor"],
+            grupo_id=self._current_props["grupo_id"],
         )
+        self.project.add_losa(losa)
+        self._refresh()
+
+        self._canvas.set_status(
+            "▭ Losa inyectada — Clic en otro recinto · RClick = Propiedades · ESC = salir"
+        )
+
+    def on_right_click(self, world_x: float, world_y: float) -> None:
+        self._open_props_dialog()
+
+    def on_key_press(self, key: str) -> None:
+        key_l = key.lower()
+        if key_l == "escape":
+            self._canvas.deactivate_tool()
