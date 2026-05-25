@@ -59,10 +59,15 @@ QDialogButtonBox QPushButton{background:#2E3A4E;color:#E0E6F0;
 QDialogButtonBox QPushButton:hover{background:#4A90D9;color:#fff;}
 """
 
-# Column indices
+# Column indices (Niveles)
 COL_NOMBRE = 0
 COL_COTA   = 1
 COL_GRUPO  = 2
+
+# Column indices (Grupos)
+COL_G_NOMBRE = 0
+COL_G_CM = 1
+COL_G_CV = 2
 
 
 class _GrupoDelegate(QStyledItemDelegate):
@@ -111,11 +116,12 @@ class NivelManagerDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.project = project
-        self.setWindowTitle("Gestión de Plantas y Grupos")
-        self.resize(600, 540)
+        self.setWindowTitle("Gestión de Plantas, Grupos y Cargas")
+        self.resize(650, 650)
         self.setStyleSheet(_STYLE)
         self._build_ui()
         self._refresh_table()
+        self._refresh_grupos_table()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
@@ -157,24 +163,35 @@ class NivelManagerDialog(QDialog):
         btn_row.addStretch()
         root.addLayout(btn_row)
 
-        # ── Add group mini-form
-        grp_box = QGroupBox("Nuevo Grupo")
-        grp_layout = QHBoxLayout(grp_box)
+        # ── Grupos table
+        grp_box = QGroupBox("Grupos de Plantas (Cargas Superficiales)")
+        grp_layout = QVBoxLayout(grp_box)
         grp_layout.setContentsMargins(8, 12, 8, 8)
         grp_layout.setSpacing(8)
+        
+        self._table_g = QTableWidget(0, 3)
+        self._table_g.setHorizontalHeaderLabels(["Nombre Grupo", "CM (kN/m²)", "CV (kN/m²)"])
+        self._table_g.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table_g.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table_g.setFixedHeight(120)
+        grp_layout.addWidget(self._table_g)
 
+        # ── Add group mini-form
+        add_g_layout = QHBoxLayout()
         self._new_grupo_name = QLineEdit()
         self._new_grupo_name.setPlaceholderText("Nombre del grupo (ej. Tipo A)")
         self._btn_add_grupo = QPushButton("+ Crear Grupo")
         self._btn_add_grupo.setObjectName("btn_add_grupo")
         self._btn_add_grupo.clicked.connect(self._add_grupo)
-        grp_layout.addWidget(QLabel("Nombre:"))
-        grp_layout.addWidget(self._new_grupo_name, stretch=1)
-        grp_layout.addWidget(self._btn_add_grupo)
+        add_g_layout.addWidget(QLabel("Nuevo:"))
+        add_g_layout.addWidget(self._new_grupo_name, stretch=1)
+        add_g_layout.addWidget(self._btn_add_grupo)
+        grp_layout.addLayout(add_g_layout)
+        
         root.addWidget(grp_box)
 
         note = QLabel(
-            "ⓘ  Doble clic en Nombre o Cota para editar.  "
+            "ⓘ  Doble clic en Cota, CM o CV para editar valores.  "
             "Doble clic en Grupo para asignar a un grupo existente.  "
             "Las plantas sin grupo aparecen en naranja."
         )
@@ -227,6 +244,24 @@ class NivelManagerDialog(QDialog):
 
             self._table.setItem(row, COL_GRUPO, g_item)
 
+    def _refresh_grupos_table(self) -> None:
+        """Populate the grupos table."""
+        self._table_g.setRowCount(0)
+        for grupo in self.project.grupos:
+            row = self._table_g.rowCount()
+            self._table_g.insertRow(row)
+            
+            n_item = QTableWidgetItem(grupo.nombre)
+            n_item.setData(Qt.ItemDataRole.UserRole, grupo.id)
+            n_item.setFlags(n_item.flags() & ~Qt.ItemFlag.ItemIsEditable) # Not editable here
+            self._table_g.setItem(row, COL_G_NOMBRE, n_item)
+            
+            cm_item = QTableWidgetItem(f"{grupo.carga_muerta:.2f}")
+            self._table_g.setItem(row, COL_G_CM, cm_item)
+            
+            cv_item = QTableWidgetItem(f"{grupo.sobrecarga_uso:.2f}")
+            self._table_g.setItem(row, COL_G_CV, cv_item)
+
     def _refresh_delegate(self) -> None:
         """Recreate the delegate so new groups appear in its combo list."""
         self._grupo_delegate = _GrupoDelegate(self.project, self._table)
@@ -276,6 +311,7 @@ class NivelManagerDialog(QDialog):
         self._new_grupo_name.clear()
         self._refresh_delegate()  # update delegate so new group appears in combos
         self._refresh_table()
+        self._refresh_grupos_table()
 
     # ------------------------------------------------------------------ apply
     def _apply(self) -> None:
@@ -307,8 +343,20 @@ class NivelManagerDialog(QDialog):
                 grupo = self.project.get_grupo_by_id(grupo_id)
                 if grupo and nivel_id not in grupo.nivel_ids:
                     grupo.nivel_ids.append(nivel_id)
+                    
+        # Step 3: Update CM and CV for grupos
+        for row in range(self._table_g.rowCount()):
+            grupo_id = self._table_g.item(row, COL_G_NOMBRE).data(Qt.ItemDataRole.UserRole)
+            grupo = self.project.get_grupo_by_id(grupo_id)
+            if grupo:
+                try:
+                    grupo.carga_muerta = float(self._table_g.item(row, COL_G_CM).text())
+                except ValueError: pass
+                try:
+                    grupo.sobrecarga_uso = float(self._table_g.item(row, COL_G_CV).text())
+                except ValueError: pass
 
-        # Step 3: Re-sort and emit
+        # Step 4: Re-sort and emit
         self.project.niveles.sort(key=lambda n: n.cota)
         self.project.niveles_changed.emit()
         self.accept()

@@ -294,10 +294,37 @@ def render_canvas_2d(plotter: "QtInteractor", project: "Project") -> None:
                     render_lines_as_tubes=False,
                 )
 
+    # --- Cargas Lineales ------------------------------------------------
+    if grupo is not None:
+        cargas = project.get_cargas_lineales_en_grupo(grupo.id)
+        for carga in cargas:
+            p1 = carga.p1
+            p2 = carga.p2
+            arr = np.array([[p1[0], p1[1], 0.03], [p2[0], p2[1], 0.03]], dtype=float)
+            poly = pv.PolyData()
+            poly.points = arr
+            poly.lines = np.array([2, 0, 1], dtype=int)
+            
+            # Draw dashed line or thick line
+            plotter.add_mesh(
+                poly, color="#FF4500", line_width=3.0,
+                name=f"carga_2d_{carga.id}",
+                render_lines_as_tubes=False,
+            )
+            # Label
+            pt = np.array([[(p1[0]+p2[0])/2, (p1[1]+p2[1])/2, 0.05]])
+            plotter.add_point_labels(
+                pt, [f"q={carga.magnitud}kN/m ({carga.hipotesis})"],
+                font_size=9, text_color="#FF4500",
+                always_visible=True, shadow=True,
+                shape_opacity=0.0, fill_shape=False,
+                name=f"label_carga_{carga.id}",
+            )
+
 
 def _clear_element_actors(plotter: "QtInteractor") -> None:
-    """Remove only element actors (pilar_*, viga_*, panio_*, losa_*, label_*) not the grid."""
-    prefixes = ("pilar_2d_", "viga_2d_", "panio_2d_", "losa_2d_", "label_pilar_", "label_viga_")
+    """Remove only element actors (pilar_*, viga_*, panio_*, losa_*, carga_*, label_*) not the grid."""
+    prefixes = ("pilar_2d_", "viga_2d_", "panio_2d_", "losa_2d_", "carga_2d_", "label_pilar_", "label_viga_", "label_carga_")
     keys_to_remove = [
         k for k in plotter.renderer.actors
         if any(k.startswith(p) for p in prefixes)
@@ -474,7 +501,7 @@ def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
     plotter.add_axes(color="white")
 
 # ================================================================== MEF Results
-def render_mef_results(plotter, project, mef_results, active_field="Desplazamientos") -> None:
+def render_mef_results(plotter, project, mef_results, active_field="Desplazamientos", hipotesis="Envolvente") -> None:
     """Renders the warped MEF results in the 3D viewer.
     
     Args:
@@ -482,6 +509,7 @@ def render_mef_results(plotter, project, mef_results, active_field="Desplazamien
         project: Project containing the geometric data.
         mef_results: Dict from solver.py with 'mesh', 'displacements', 'forces_mxx', 'forces_myy'.
         active_field: "Desplazamientos", "Esfuerzos Mxx", or "Esfuerzos Myy".
+        hipotesis: The load combination/hypothesis to visualize ("Envolvente", "PP", "CM", "ELU_1", etc.)
     """
     plotter.clear()
     setup_viewer_3d(plotter)
@@ -518,9 +546,15 @@ def render_mef_results(plotter, project, mef_results, active_field="Desplazamien
         return
         
     mesh_data = mef_results["mesh"]
-    disps = mef_results["displacements"]
-    mxx = mef_results["forces_mxx"]
-    myy = mef_results["forces_myy"]
+    
+    # Safely get the dictionaries for the chosen hypothesis
+    disps_dict = mef_results.get("displacements", {})
+    mxx_dict = mef_results.get("forces_mxx", {})
+    myy_dict = mef_results.get("forces_myy", {})
+    
+    disps = disps_dict.get(hipotesis, {})
+    mxx = mxx_dict.get(hipotesis, {})
+    myy = myy_dict.get(hipotesis, {})
     
     import numpy as np
     import pyvista as pv

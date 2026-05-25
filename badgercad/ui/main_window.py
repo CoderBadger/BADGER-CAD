@@ -5,7 +5,7 @@ os.environ.setdefault("QT_API", "pyqt6")
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QStatusBar, QLabel, QMessageBox,
+    QStatusBar, QLabel, QMessageBox, QApplication
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -102,7 +102,11 @@ class MainWindow(QMainWindow):
         self._ribbon.tool_pilar_requested.connect(self._activate_pilar_tool)
         self._ribbon.tool_borrar_pilar_requested.connect(self._activate_borrar_pilar_tool)
         self._ribbon.tool_viga_requested.connect(self._activate_viga_tool)
+        self._ribbon.tool_borrar_viga_requested.connect(self._activate_borrar_viga_tool)
         self._ribbon.tool_losa_requested.connect(self._activate_losa_tool)
+        self._ribbon.tool_borrar_losa_requested.connect(self._activate_borrar_losa_tool)
+        self._ribbon.tool_carga_lineal_requested.connect(self._activate_carga_lineal_tool)
+        self._ribbon.tool_borrar_carga_lineal_requested.connect(self._activate_borrar_carga_lineal_tool)
         self._ribbon.vista_3d_requested.connect(self._open_3d_viewer)
         self._ribbon.gestionar_plantas.connect(self._open_nivel_manager)
         self._ribbon.datos_generales.connect(self._open_datos_generales)
@@ -151,11 +155,33 @@ class MainWindow(QMainWindow):
         self._canvas.set_tool(BorrarPilarTool(self._canvas))
 
     def _activate_viga_tool(self) -> None:
-        self._canvas.set_tool(VigaTool(self._canvas))
+        from badgercad.cad.tools.viga_tool import VigaTool
+        tool = VigaTool(self._canvas)
+        self._canvas.set_tool(tool)
+
+    def _activate_borrar_viga_tool(self) -> None:
+        from badgercad.cad.tools.borrar_viga_tool import BorrarVigaTool
+        tool = BorrarVigaTool(self._canvas)
+        self._canvas.set_tool(tool)
 
     def _activate_losa_tool(self) -> None:
         from badgercad.cad.tools.losa_tool import LosaTool
         tool = LosaTool(self._canvas)
+        self._canvas.set_tool(tool)
+
+    def _activate_borrar_losa_tool(self) -> None:
+        from badgercad.cad.tools.borrar_losa_tool import BorrarLosaTool
+        tool = BorrarLosaTool(self._canvas)
+        self._canvas.set_tool(tool)
+
+    def _activate_carga_lineal_tool(self) -> None:
+        from badgercad.cad.tools.carga_lineal_tool import CargaLinealTool
+        tool = CargaLinealTool(self._canvas)
+        self._canvas.set_tool(tool)
+
+    def _activate_borrar_carga_lineal_tool(self) -> None:
+        from badgercad.cad.tools.borrar_carga_lineal_tool import BorrarCargaLinealTool
+        tool = BorrarCargaLinealTool(self._canvas)
         self._canvas.set_tool(tool)
 
     # ------------------------------------------------------------------ dialogs
@@ -234,23 +260,28 @@ class MainWindow(QMainWindow):
             offset = 0
             # Get pillars for boundary conditions
             pilares = self.project.pilares
+            vigas = self.project.get_vigas_en_grupo(grupo.id)
+            cargas_lineales = self.project.get_cargas_lineales_en_grupo(grupo.id)
+            cm_sup = grupo.carga_muerta
+            cv_sup = grupo.sobrecarga_uso
             
             for losa in losas:
                 mesh = mesh_losa(losa, target_size=0.50)
-                res = resolver_losa(losa, mesh, pilares, carga_qz=10000.0)
+                res = resolver_losa(losa, mesh, pilares, vigas, cargas_lineales, cm_sup, cv_sup)
                 
                 for tag, coords in mesh["nodes"].items():
                     combined_results["mesh"]["nodes"][tag + offset] = coords
                 for tag, n_tags in mesh["elements"].items():
                     combined_results["mesh"]["elements"][tag + offset] = [nt + offset for nt in n_tags]
                     
-                for tag, dz in res["displacements"].items():
-                    combined_results["displacements"][tag + offset] = dz
-                for tag, mxx in res["forces_mxx"].items():
-                    combined_results["forces_mxx"][tag + offset] = mxx
-                for tag, myy in res["forces_myy"].items():
-                    combined_results["forces_myy"][tag + offset] = myy
-                    
+                # Aggregate nested combo results
+                for field in ["displacements", "forces_mxx", "forces_myy"]:
+                    for combo, data in res[field].items():
+                        if combo not in combined_results[field]:
+                            combined_results[field][combo] = {}
+                        for tag, val in data.items():
+                            combined_results[field][combo][tag + offset] = val
+                            
                 offset += 1000000
                 
             self.project.mef_results = combined_results
@@ -259,7 +290,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Cálculo Exitoso", "Análisis MEF completado. Usa la pestaña Resultados para visualizar.")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error en MEF", f"Ocurrió un error en el cálculo:\n{str(e)}")
+            if "OpenSeesImportError" in str(type(e).__name__):
+                QMessageBox.critical(
+                    self, "Error al cargar el motor MEF", 
+                    "Error al cargar el motor MEF. Por favor, asegúrese de usar Python 3.10 o 3.11 y tener instalado Microsoft Visual C++ Redistributable."
+                )
+            else:
+                QMessageBox.critical(self, "Error en MEF", f"Ocurrió un error en el cálculo:\n{str(e)}")
             self._canvas.set_status("Error en cálculo MEF.")
         finally:
             QApplication.restoreOverrideCursor()

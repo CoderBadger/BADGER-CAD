@@ -79,6 +79,12 @@ class Viga:
         """Human-readable section string, e.g. ``"25x50"`` [cm × cm]."""
         return f"{int(self.ancho * 100)}x{int(self.canto * 100)}"
 
+    @property
+    def peso_propio(self) -> float:
+        """Linear self-weight in kN/m."""
+        from badgercad.core.loads import DENSIDAD_HORMIGON
+        return self.ancho * self.canto * DENSIDAD_HORMIGON
+
     def __repr__(self) -> str:  # pragma: no cover
         return (
             f"Viga({self.seccion_label} "

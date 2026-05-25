@@ -104,6 +104,12 @@ class Losa:
             area -= verts[j][0] * verts[i][1]
         return abs(area) / 2.0
 
+    @property
+    def peso_propio(self) -> float:
+        """Superficial self-weight in kN/m2."""
+        from badgercad.core.loads import DENSIDAD_HORMIGON
+        return self.espesor * DENSIDAD_HORMIGON
+
     def __repr__(self) -> str:  # pragma: no cover
         return (
             f"Losa({self.tipo} e={self.espesor:.2f}m "

@@ -19,7 +19,7 @@ os.environ.setdefault("QT_API", "pyqt6")
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QWidget, QFrame,
+    QPushButton, QLabel, QWidget, QFrame, QComboBox
 )
 from PyQt6.QtCore import Qt
 from pyvistaqt import QtInteractor
@@ -102,6 +102,9 @@ class Viewer3D(QDialog):
 
         root.addWidget(self._make_info_bar())
         root.addWidget(self._make_view_bar())
+        self._mef_bar = self._make_mef_bar()
+        self._mef_bar.setVisible(False)
+        root.addWidget(self._mef_bar)
         root.addWidget(self._make_sep())
 
         # ── PyVista plotter ─────────────────────────────────────────────
@@ -166,6 +169,35 @@ class Viewer3D(QDialog):
         lock_lbl = QLabel("🔒 Z-up bloqueado")
         lock_lbl.setStyleSheet("color: #2A6A3A; font-size: 10px;")
         lay.addWidget(lock_lbl)
+        return bar
+
+    def _make_mef_bar(self) -> QWidget:
+        """Bar for selecting the load combination/hypothesis when viewing MEF results."""
+        bar = QWidget()
+        bar.setFixedHeight(38)
+        bar.setStyleSheet("background: #12181F;")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(14, 4, 14, 4)
+        lay.setSpacing(10)
+        
+        lbl = QLabel("🎯 Hipótesis / Combinación:")
+        lbl.setStyleSheet("color: #E0ECFF; font-size: 11px; font-weight: 700;")
+        lay.addWidget(lbl)
+        
+        self._combo_hipotesis = QComboBox()
+        self._combo_hipotesis.addItems(["Envolvente", "ELU_1", "ELU_2", "PP", "CM", "CV"])
+        self._combo_hipotesis.setStyleSheet(
+            "QComboBox { background: #1A2232; color: #A0B4CC; border: 1px solid #2A3A50; padding: 4px; }"
+            "QComboBox::drop-down { border: 0px; }"
+        )
+        self._combo_hipotesis.currentTextChanged.connect(self._on_hipotesis_changed)
+        lay.addWidget(self._combo_hipotesis)
+        
+        self._lbl_active_field = QLabel("")
+        self._lbl_active_field.setStyleSheet("color: #4A90D9; font-size: 11px; font-weight: bold; margin-left: 20px;")
+        lay.addWidget(self._lbl_active_field)
+        
+        lay.addStretch()
         return bar
 
     def _make_sep(self) -> QFrame:
@@ -237,8 +269,25 @@ class Viewer3D(QDialog):
 
     def show_mef_results(self, mef_results: dict, active_field: str) -> None:
         """Render FEA results instead of the standard CAD model."""
+        self._mef_results = mef_results
+        self._active_field = active_field
+        self._mef_bar.setVisible(True)
+        self._lbl_active_field.setText(f"Mostrando: {active_field}")
+        
+        self._render_current_mef()
+
+    def _on_hipotesis_changed(self, text: str) -> None:
+        if hasattr(self, '_mef_results') and self._mef_results:
+            self._render_current_mef()
+            
+    def _render_current_mef(self) -> None:
+        if not hasattr(self, '_mef_results') or not self._mef_results:
+            return
+            
+        hipotesis = self._combo_hipotesis.currentText()
         from badgercad.render.scene import render_mef_results
-        render_mef_results(self.plotter, self.project, mef_results, active_field)
+        # Update render_mef_results call to pass the specific combination
+        render_mef_results(self.plotter, self.project, self._mef_results, self._active_field, hipotesis)
         self.plotter.render()
 
     # ------------------------------------------------------------------ cleanup

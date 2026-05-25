@@ -45,6 +45,7 @@ from .elements.grupo import Grupo
 from .elements.pilar import Pilar
 from .elements.losa  import Losa
 from .elements.viga  import Viga
+from .loads import CargaLineal
 
 # Module-level singleton reference
 _project_instance: Optional["Project"] = None
@@ -88,6 +89,7 @@ class Project(QObject):
     pilares_changed      = pyqtSignal()
     losas_changed        = pyqtSignal()
     vigas_changed        = pyqtSignal()
+    cargas_lineales_changed = pyqtSignal()
     nivel_activo_changed = pyqtSignal()
     project_reset        = pyqtSignal()
 
@@ -104,6 +106,7 @@ class Project(QObject):
         self.pilares: List[Pilar] = []
         self.losas:   List[Losa]  = []
         self.vigas:   List[Viga]  = []
+        self.cargas_lineales: List[CargaLineal] = []
 
         self._nivel_activo: Optional[Nivel] = None
         self._grupo_activo: Optional[Grupo] = None
@@ -254,6 +257,14 @@ class Project(QObject):
         """
         return [lo for lo in self.losas if lo.grupo_id == grupo_id]
 
+    def get_vigas_en_grupo(self, grupo_id: str) -> List[Viga]:
+        """Return all beams belonging to a given functional group."""
+        return [v for v in self.vigas if v.grupo_id == grupo_id]
+
+    def get_cargas_lineales_en_grupo(self, grupo_id: str) -> List[CargaLineal]:
+        """Return all linear loads belonging to a given functional group."""
+        return [c for c in self.cargas_lineales if c.grupo_id == grupo_id]
+
     def niveles_ordenados(self) -> List[Nivel]:
         """Return all floors sorted bottom-up by elevation (cota).
 
@@ -295,29 +306,18 @@ class Project(QObject):
         self.pilares_changed.emit()
 
     def add_losa(self, losa: Losa) -> None:
-        """Add a slab and register it in its parent Grupo.
-
-        Emits ``losas_changed``.
-
-        Args:
-            losa: A ``Losa`` instance with a valid ``grupo_id`` pointing to an
-                  existing ``Grupo``.
-        """
+        """Add a new Losa to the project."""
         self.losas.append(losa)
-        grupo = self.get_grupo_by_id(losa.grupo_id)
-        if grupo and losa.id not in grupo.losa_ids:
-            grupo.losa_ids.append(losa.id)
+        self._push_undo(('losa_added', losa.id))
         self.losas_changed.emit()
 
     def remove_losa(self, losa_id: str) -> None:
-        """Remove a slab and deregister it from its parent Grupo.
-
-        Emits ``losas_changed``.
-        """
-        self.losas = [lo for lo in self.losas if lo.id != losa_id]
-        for g in self.grupos:
-            if losa_id in g.losa_ids:
-                g.losa_ids.remove(losa_id)
+        """Remove a Losa from the project."""
+        losa = next((l for l in self.losas if l.id == losa_id), None)
+        if not losa:
+            return
+        self.losas = [l for l in self.losas if l.id != losa_id]
+        self._push_undo(('losa_removed', losa))
         self.losas_changed.emit()
 
     def add_viga(self, viga: Viga) -> None:
@@ -335,27 +335,32 @@ class Project(QObject):
         self._push_undo(('viga_added', viga.id))
         self.vigas_changed.emit()
 
-    def remove_viga(self, viga_id: str, record: bool = True) -> None:
-        """Remove a beam and deregister it from its parent Group.
-
-        Emits ``vigas_changed``.
-
-        Args:
-            viga_id: ID of the beam to remove.
-            record:  If ``True``, push an undo record.
-        """
+    def remove_viga(self, viga_id: str) -> None:
+        """Remove a Viga from the project and its Grupo."""
         viga = next((v for v in self.vigas if v.id == viga_id), None)
-        if viga and record:
-            self._push_undo(('viga_removed', viga))
+        if not viga:
+            return
         self.vigas = [v for v in self.vigas if v.id != viga_id]
-        for g in self.grupos:
-            if viga_id in g.viga_ids:
-                g.viga_ids.remove(viga_id)
+        grupo = self.get_grupo_by_id(viga.grupo_id)
+        if grupo and viga_id in grupo.viga_ids:
+            grupo.viga_ids.remove(viga_id)
+        self._push_undo(('viga_removed', viga))
         self.vigas_changed.emit()
 
-    def get_vigas_en_grupo(self, grupo_id: str) -> List[Viga]:
-        """Return all beams belonging to a given functional group."""
-        return [v for v in self.vigas if v.grupo_id == grupo_id]
+    def add_carga_lineal(self, carga: CargaLineal) -> None:
+        """Add a new Carga Lineal to the project."""
+        self.cargas_lineales.append(carga)
+        self._push_undo(('carga_added', carga.id))
+        self.cargas_lineales_changed.emit()
+
+    def remove_carga_lineal(self, carga_id: str) -> None:
+        """Remove a Carga Lineal from the project."""
+        carga = next((c for c in self.cargas_lineales if c.id == carga_id), None)
+        if not carga:
+            return
+        self.cargas_lineales = [c for c in self.cargas_lineales if c.id != carga_id]
+        self._push_undo(('carga_removed', carga))
+        self.cargas_lineales_changed.emit()
 
     def add_nivel(self, nivel: Nivel) -> None:
         """Add a floor level and keep the list sorted by cota.
@@ -402,6 +407,7 @@ class Project(QObject):
         self.pilares.clear()
         self.losas.clear()
         self.vigas.clear()
+        self.cargas_lineales.clear()
         self._nivel_activo = None
         self._grupo_activo = None
         self.clear_undo()
@@ -412,7 +418,7 @@ class Project(QObject):
         self.losas_changed.emit()
         self.vigas_changed.emit()
 
-    # ------------------------------------------------------------------ undo
+    # ------------------------------------------------------------------ undo stack
     def _push_undo(self, cmd: tuple) -> None:
         """Push a command onto the undo stack (max 20 entries, LIFO).
 
@@ -423,9 +429,7 @@ class Project(QObject):
         Args:
             cmd: A tuple whose first element is an action tag string and
                  whose remaining elements are the payload needed to reverse
-                 the operation.  Currently supported tags:
-                 - ``('pilar_added', pilar_id)``
-                 - ``('pilar_removed', pilar_obj)``
+                 the operation.
         """
         self._undo_stack.append(cmd)
         if len(self._undo_stack) > 20:
@@ -463,6 +467,22 @@ class Project(QObject):
             if grupo and viga.id not in grupo.viga_ids:
                 grupo.viga_ids.append(viga.id)
             self.vigas_changed.emit()
+        elif action == 'losa_added':
+            losa_id = cmd[1]
+            self.losas = [l for l in self.losas if l.id != losa_id]
+            self.losas_changed.emit()
+        elif action == 'losa_removed':
+            losa = cmd[1]
+            self.losas.append(losa)
+            self.losas_changed.emit()
+        elif action == 'carga_added':
+            carga_id = cmd[1]
+            self.cargas_lineales = [c for c in self.cargas_lineales if c.id != carga_id]
+            self.cargas_lineales_changed.emit()
+        elif action == 'carga_removed':
+            carga = cmd[1]
+            self.cargas_lineales.append(carga)
+            self.cargas_lineales_changed.emit()
         return True
 
     def clear_undo(self) -> None:

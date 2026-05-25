@@ -157,7 +157,11 @@ class Ribbon(QWidget):
     tool_pilar_requested        = pyqtSignal()
     tool_borrar_pilar_requested = pyqtSignal()
     tool_viga_requested         = pyqtSignal()
+    tool_borrar_viga_requested  = pyqtSignal()
     tool_losa_requested         = pyqtSignal()
+    tool_borrar_losa_requested  = pyqtSignal()
+    tool_carga_lineal_requested = pyqtSignal()
+    tool_borrar_carga_lineal_requested = pyqtSignal()
     vista_3d_requested          = pyqtSignal()
     gestionar_plantas           = pyqtSignal()
     datos_generales             = pyqtSignal()
@@ -295,16 +299,21 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self._btn_losa = _tool_btn("▭", "Inyectar\nLosa",
-                                   "Crear losa haciendo clic en un paño cerrado",
+        self._btn_losa = _tool_btn("🟩", "Paño\nAutomático",
+                                   "Crear losa (clic dentro de un recinto de vigas)",
                                    checkable=True)
         self._btn_losa.clicked.connect(self._on_losa_clicked)
         self._btn_losa.setEnabled(True)
 
+        self._btn_borrar_losa = _tool_btn("🗑", "Borrar\nLosa",
+                                          "Eliminar una losa existente",
+                                          checkable=True)
+        self._btn_borrar_losa.clicked.connect(self._on_borrar_losa_clicked)
+
         note = QLabel("  ⓘ  Haga clic dentro de recintos cerrados por vigas.")
         note.setStyleSheet("color:#4A5A6A;font-size:11px;")
 
-        lay.addWidget(_group_widget("Losas", [self._btn_losa]))
+        lay.addWidget(_group_widget("Losas", [self._btn_losa, self._btn_borrar_losa]))
         lay.addWidget(note)
         lay.addStretch()
         return w
@@ -321,7 +330,12 @@ class Ribbon(QWidget):
                                    checkable=True)
         self._btn_viga.clicked.connect(self._on_viga_clicked)
         
-        lay.addWidget(_group_widget("Vigas", [self._btn_viga]))
+        self._btn_borrar_viga = _tool_btn("🗑", "Borrar\nViga",
+                                          "Eliminar una viga existente",
+                                          checkable=True)
+        self._btn_borrar_viga.clicked.connect(self._on_borrar_viga_clicked)
+        
+        lay.addWidget(_group_widget("Vigas", [self._btn_viga, self._btn_borrar_viga]))
         
         self._btn_esc_v = _tool_btn("✕", "ESC / Fin",
                                     "Terminar herramienta activa")
@@ -335,9 +349,27 @@ class Ribbon(QWidget):
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(12, 0, 12, 0)
-        lbl = QLabel("⚡  Módulo de Cargas — disponible en Hito 2")
-        lbl.setStyleSheet("color:#4A5A6A;font-size:12px;")
-        lay.addWidget(lbl)
+        lay.setSpacing(0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        
+        self._btn_carga_lineal = _tool_btn("🔴", "Carga\nLineal",
+                                   "Trazar una carga lineal especial sobre la planta",
+                                   checkable=True)
+        self._btn_carga_lineal.clicked.connect(self._on_carga_lineal_clicked)
+        
+        self._btn_borrar_carga_lineal = _tool_btn("🗑", "Borrar\nCarga",
+                                                  "Eliminar una carga lineal existente",
+                                                  checkable=True)
+        self._btn_borrar_carga_lineal.clicked.connect(self._on_borrar_carga_lineal_clicked)
+        
+        lay.addWidget(_group_widget("Cargas", [self._btn_carga_lineal, self._btn_borrar_carga_lineal]))
+        
+        self._btn_esc_c = _tool_btn("✕", "ESC / Fin",
+                                    "Terminar herramienta activa")
+        self._btn_esc_c.clicked.connect(self.esc_tool)
+        lay.addWidget(_group_widget("Control", [self._btn_esc_c]))
+        
+        lay.addStretch()
         return w
 
     def _tab_calcular(self) -> QWidget:
@@ -376,40 +408,44 @@ class Ribbon(QWidget):
 
     # ------------------------------------------------------------------ handlers
     def _on_pilar_clicked(self) -> None:
-        self._btn_losa.setChecked(False)
-        self._btn_borrar_pilar.setChecked(False)
-        self._btn_viga.setChecked(False)
-        if self._btn_pilar.isChecked():
-            self.tool_pilar_requested.emit()
-        else:
-            self.esc_tool.emit()
+        self.uncheck_all_tools()
+        self._btn_pilar.setChecked(True)
+        self.tool_pilar_requested.emit()
 
     def _on_borrar_pilar_clicked(self) -> None:
-        self._btn_pilar.setChecked(False)
-        self._btn_losa.setChecked(False)
-        self._btn_viga.setChecked(False)
-        if self._btn_borrar_pilar.isChecked():
-            self.tool_borrar_pilar_requested.emit()
-        else:
-            self.esc_tool.emit()
+        self.uncheck_all_tools()
+        self._btn_borrar_pilar.setChecked(True)
+        self.tool_borrar_pilar_requested.emit()
 
     def _on_viga_clicked(self) -> None:
-        self._btn_pilar.setChecked(False)
-        self._btn_borrar_pilar.setChecked(False)
-        self._btn_losa.setChecked(False)
-        if self._btn_viga.isChecked():
-            self.tool_viga_requested.emit()
-        else:
-            self.esc_tool.emit()
+        self.uncheck_all_tools()
+        self._btn_viga.setChecked(True)
+        self.tool_viga_requested.emit()
+
+    def _on_borrar_viga_clicked(self) -> None:
+        self.uncheck_all_tools()
+        self._btn_borrar_viga.setChecked(True)
+        self.tool_borrar_viga_requested.emit()
 
     def _on_losa_clicked(self) -> None:
-        self._btn_pilar.setChecked(False)
-        self._btn_borrar_pilar.setChecked(False)
-        self._btn_viga.setChecked(False)
-        if self._btn_losa.isChecked():
-            self.tool_losa_requested.emit()
-        else:
-            self.esc_tool.emit()
+        self.uncheck_all_tools()
+        self._btn_losa.setChecked(True)
+        self.tool_losa_requested.emit()
+
+    def _on_borrar_losa_clicked(self) -> None:
+        self.uncheck_all_tools()
+        self._btn_borrar_losa.setChecked(True)
+        self.tool_borrar_losa_requested.emit()
+
+    def _on_carga_lineal_clicked(self) -> None:
+        self.uncheck_all_tools()
+        self._btn_carga_lineal.setChecked(True)
+        self.tool_carga_lineal_requested.emit()
+
+    def _on_borrar_carga_lineal_clicked(self) -> None:
+        self.uncheck_all_tools()
+        self._btn_borrar_carga_lineal.setChecked(True)
+        self.tool_borrar_carga_lineal_requested.emit()
 
     def _on_grid_changed(self, _idx: int) -> None:
         txt = self._grid_combo.currentText()   # e.g. "0.50 m"
@@ -425,8 +461,12 @@ class Ribbon(QWidget):
 
     # ------------------------------------------------------------------ public
     def uncheck_all_tools(self) -> None:
-        """Called when ESC or deactivate_tool fires."""
+        """Uncheck all tool buttons when a tool is deactivated."""
         self._btn_pilar.setChecked(False)
-        self._btn_losa.setChecked(False)
         self._btn_borrar_pilar.setChecked(False)
+        self._btn_losa.setChecked(False)
+        self._btn_borrar_losa.setChecked(False)
         self._btn_viga.setChecked(False)
+        self._btn_borrar_viga.setChecked(False)
+        self._btn_carga_lineal.setChecked(False)
+        self._btn_borrar_carga_lineal.setChecked(False)

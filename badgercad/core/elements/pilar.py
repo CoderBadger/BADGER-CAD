@@ -87,6 +87,12 @@ class Pilar:
         """
         return f"{int(self.ancho * 100)}x{int(self.largo * 100)}"
 
+    @property
+    def peso_propio_por_metro(self) -> float:
+        """Linear self-weight in vertical direction in kN/m."""
+        from badgercad.core.loads import DENSIDAD_HORMIGON
+        return self.ancho * self.largo * DENSIDAD_HORMIGON
+
     def bounds_2d(self) -> tuple[float, float, float, float]:
         """Axis-aligned bounding box (AABB) of the column footprint in plan.
 

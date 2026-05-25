@@ -104,7 +104,9 @@ class Canvas2D(QWidget):
         self._install_vtk_observers()
 
         self.project.pilares_changed.connect(self.refresh_scene)
+        self.project.vigas_changed.connect(self.refresh_scene)
         self.project.losas_changed.connect(self.refresh_scene)
+        self.project.cargas_lineales_changed.connect(self.refresh_scene)
         self.project.nivel_activo_changed.connect(self.refresh_scene)
 
     # ------------------------------------------------------------------ UI
