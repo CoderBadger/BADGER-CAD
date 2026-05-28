@@ -110,8 +110,10 @@ class MainWindow(QMainWindow):
         self._ribbon.vista_3d_requested.connect(self._open_3d_viewer)
         self._ribbon.gestionar_plantas.connect(self._open_nivel_manager)
         self._ribbon.datos_generales.connect(self._open_datos_generales)
-        self._ribbon.grid_spacing_changed.connect(self._on_grid_changed)
         self._ribbon.nuevo_proyecto.connect(self._nuevo_proyecto)
+        self._ribbon.abrir_proyecto.connect(self._on_abrir_proyecto)
+        self._ribbon.guardar_proyecto.connect(self._on_guardar_proyecto)
+        self._ribbon.grid_spacing_changed.connect(self._on_grid_changed)
         self._ribbon.esc_tool.connect(self._canvas.deactivate_tool)
         self._ribbon.esc_tool.connect(self._ribbon.uncheck_all_tools)
         
@@ -229,6 +231,45 @@ class MainWindow(QMainWindow):
             self._canvas.refresh_scene()
             self._ribbon.set_resultados_enabled(False)
             
+    def _on_abrir_proyecto(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        from badgercad.core.storage import load_project_json
+        
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Abrir Proyecto BadgerCAD", "", "Archivos BadgerCAD (*.bgcad)"
+        )
+        if not filepath:
+            return
+            
+        try:
+            new_project = load_project_json(filepath)
+            # Reasignamos el proyecto a la UI
+            self.project = new_project
+            self._canvas.project = new_project
+            # Reconectamos señales
+            self._connect_signals()
+            self._canvas.refresh_scene()
+            self._ribbon.set_resultados_enabled(False)
+            QMessageBox.information(self, "Proyecto cargado", "El proyecto ha sido cargado con éxito.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al abrir", f"Error abriendo el proyecto:\n{e}")
+
+    def _on_guardar_proyecto(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        from badgercad.core.storage import save_project_json
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Guardar Proyecto BadgerCAD", "nuevo_proyecto.bgcad", "Archivos BadgerCAD (*.bgcad)"
+        )
+        if not filepath:
+            return
+            
+        try:
+            save_project_json(self.project, filepath)
+            QMessageBox.information(self, "Proyecto guardado", "El proyecto ha sido guardado con éxito.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al guardar", f"Error guardando el proyecto:\n{e}")
+
     # ------------------------------------------------------------------ MEF calculation
     def _on_calcular(self) -> None:
         grupo = self.project.grupo_activo
@@ -236,9 +277,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Sin grupo activo", "Selecciona una planta/grupo activo para calcular.")
             return
             
-        losas = self.project.get_losas_en_grupo(grupo.id)
-        if not losas:
-            QMessageBox.warning(self, "Sin losas", f"No hay losas en el grupo '{grupo.nombre}' para calcular.")
+        losas_brutas = self.project.get_losas_en_grupo(grupo.id)
+        losas_calculo = [l for l in losas_brutas if getattr(l, "tipo", "NORMAL") != "HUECO"]
+        
+        if not losas_calculo:
+            QMessageBox.warning(self, "Sin losas", f"No hay losas válidas en el grupo '{grupo.nombre}' para calcular.")
             return
             
         # UI Feedback
@@ -265,7 +308,7 @@ class MainWindow(QMainWindow):
             cm_sup = grupo.carga_muerta
             cv_sup = grupo.sobrecarga_uso
             
-            for losa in losas:
+            for losa in losas_calculo:
                 mesh = mesh_losa(losa, target_size=0.50)
                 res = resolver_losa(losa, mesh, pilares, vigas, cargas_lineales, cm_sup, cv_sup)
                 

@@ -103,7 +103,7 @@ class Canvas2D(QWidget):
         self._setup_scene()
         self._install_vtk_observers()
 
-        self.project.pilares_changed.connect(self.refresh_scene)
+        self.project.pilares_changed.connect(self._on_pilares_changed)
         self.project.vigas_changed.connect(self.refresh_scene)
         self.project.losas_changed.connect(self.refresh_scene)
         self.project.cargas_lineales_changed.connect(self.refresh_scene)
@@ -278,7 +278,11 @@ class Canvas2D(QWidget):
         self.set_status("Listo")
         self.tool_deactivated.emit()
 
-    # ------------------------------------------------------------------ scene
+    def _on_pilares_changed(self) -> None:
+        from badgercad.render.scene import invalidate_vigas_actores
+        invalidate_vigas_actores()
+        self.refresh_scene()
+
     def refresh_scene(self) -> None:
         render_canvas_2d(self.plotter, self.project)
         self.plotter.render()

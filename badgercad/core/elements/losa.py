@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 import uuid
 
-LOSA_TIPOS = ["MACIZA", "RETICULAR", "VIGUETAS", "MIXTA"]
+LOSA_TIPOS = ["MACIZA", "RETICULAR", "VIGUETAS", "MIXTA", "HUECO"]
 
 
 @dataclass
@@ -106,7 +106,10 @@ class Losa:
 
     @property
     def peso_propio(self) -> float:
-        """Superficial self-weight in kN/m2."""
+        """Slab self-weight [kN/m²]"""
+        if getattr(self, "tipo", "MACIZA") == "HUECO":
+            return 0.0
+            
         from badgercad.core.loads import DENSIDAD_HORMIGON
         return self.espesor * DENSIDAD_HORMIGON
 

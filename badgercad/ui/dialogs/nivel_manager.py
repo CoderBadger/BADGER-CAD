@@ -176,15 +176,30 @@ class NivelManagerDialog(QDialog):
         self._table_g.setFixedHeight(120)
         grp_layout.addWidget(self._table_g)
 
+        self._btn_copy_to_exist = QPushButton("Copiar Vigas/Losas/Cargas a Grupo Seleccionado...")
+        self._btn_copy_to_exist.setEnabled(False)
+        self._table_g.itemSelectionChanged.connect(
+            lambda: self._btn_copy_to_exist.setEnabled(len(self._table_g.selectedItems()) > 0)
+        )
+        self._btn_copy_to_exist.clicked.connect(self._copy_to_existing_grupo)
+        grp_layout.addWidget(self._btn_copy_to_exist)
+
         # ── Add group mini-form
         add_g_layout = QHBoxLayout()
         self._new_grupo_name = QLineEdit()
         self._new_grupo_name.setPlaceholderText("Nombre del grupo (ej. Tipo A)")
+        
+        self._combo_copiar = QComboBox()
+        self._combo_copiar.addItem("— Vacío —", userData=None)
+        
         self._btn_add_grupo = QPushButton("+ Crear Grupo")
         self._btn_add_grupo.setObjectName("btn_add_grupo")
         self._btn_add_grupo.clicked.connect(self._add_grupo)
+        
         add_g_layout.addWidget(QLabel("Nuevo:"))
         add_g_layout.addWidget(self._new_grupo_name, stretch=1)
+        add_g_layout.addWidget(QLabel("Copiar de:"))
+        add_g_layout.addWidget(self._combo_copiar)
         add_g_layout.addWidget(self._btn_add_grupo)
         grp_layout.addLayout(add_g_layout)
         
@@ -245,9 +260,15 @@ class NivelManagerDialog(QDialog):
             self._table.setItem(row, COL_GRUPO, g_item)
 
     def _refresh_grupos_table(self) -> None:
-        """Populate the grupos table."""
+        """Populate the grupos table and copy combo."""
         self._table_g.setRowCount(0)
+        
+        # Keep the "— Vacío —" item, clear the rest
+        while self._combo_copiar.count() > 1:
+            self._combo_copiar.removeItem(1)
+            
         for grupo in self.project.grupos:
+            self._combo_copiar.addItem(grupo.nombre, userData=grupo.id)
             row = self._table_g.rowCount()
             self._table_g.insertRow(row)
             
@@ -306,12 +327,111 @@ class NivelManagerDialog(QDialog):
             QMessageBox.warning(self, "Nombre duplicado",
                                 f"Ya existe un grupo llamado '{nombre}'.")
             return
-        nuevo = Grupo(nombre)
-        self.project.add_grupo(nuevo)
+        grupo_id_a_copiar = self._combo_copiar.currentData()
+        nuevo_grupo = Grupo(nombre)
+        self.project.add_grupo(nuevo_grupo)
+        
+        if grupo_id_a_copiar is not None:
+            # Clonar vigas, losas y cargas
+            import copy
+            import uuid
+            
+            # Vigas
+            for viga in self.project.get_vigas_en_grupo(grupo_id_a_copiar):
+                v_copy = copy.deepcopy(viga)
+                v_copy.id = uuid.uuid4().hex[:8]
+                v_copy.grupo_id = nuevo_grupo.id  # Reasignar grupo
+                v_copy._poligono_2d_recortado = None # reset cache
+                self.project.vigas.append(v_copy)
+                
+            # Losas
+            for losa in self.project.get_losas_en_grupo(grupo_id_a_copiar):
+                l_copy = copy.deepcopy(losa)
+                l_copy.id = uuid.uuid4().hex[:8]
+                l_copy.grupo_id = nuevo_grupo.id  # Reasignar grupo
+                self.project.losas.append(l_copy)
+                
+            # Cargas Lineales
+            for carga in self.project.get_cargas_lineales_en_grupo(grupo_id_a_copiar):
+                c_copy = copy.deepcopy(carga)
+                c_copy.id = uuid.uuid4().hex[:8]
+                c_copy.grupo_id = nuevo_grupo.id  # Reasignar grupo
+                self.project.cargas_lineales.append(c_copy)
+            
+            # Notificar cambios
+            self.project.vigas_changed.emit()
+            self.project.losas_changed.emit()
+            self.project.cargas_lineales_changed.emit()
+
         self._new_grupo_name.clear()
         self._refresh_delegate()  # update delegate so new group appears in combos
         self._refresh_table()
         self._refresh_grupos_table()
+
+    def _copy_to_existing_grupo(self) -> None:
+        """Overwrite selected group with elements from another group."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        selected_rows = list(set(item.row() for item in self._table_g.selectedItems()))
+        if not selected_rows:
+            return
+        
+        row = selected_rows[0]
+        destino_id = self._table_g.item(row, COL_G_NOMBRE).data(Qt.ItemDataRole.UserRole)
+        destino_grupo = self.project.get_grupo_by_id(destino_id)
+        if not destino_grupo:
+            return
+            
+        otros_grupos = [g for g in self.project.grupos if g.id != destino_id]
+        if not otros_grupos:
+            QMessageBox.information(self, "Copiar Grupo", "No hay otros grupos disponibles para copiar.")
+            return
+            
+        items = [g.nombre for g in otros_grupos]
+        origen_nombre, ok = QInputDialog.getItem(
+            self, "Copiar a Grupo Existente",
+            f"Selecciona el grupo origen para sobrescribir '{destino_grupo.nombre}':\n"
+            "(¡Se borrarán las vigas, losas y cargas actuales del destino!)",
+            items, 0, False
+        )
+        if not ok or not origen_nombre:
+            return
+            
+        origen_grupo = next(g for g in otros_grupos if g.nombre == origen_nombre)
+        
+        # Eliminar elementos del destino
+        self.project.vigas = [v for v in self.project.vigas if v.grupo_id != destino_id]
+        self.project.losas = [l for l in self.project.losas if l.grupo_id != destino_id]
+        self.project.cargas_lineales = [c for c in self.project.cargas_lineales if c.grupo_id != destino_id]
+        
+        # Clonar desde origen
+        import copy
+        import uuid
+        
+        for viga in self.project.get_vigas_en_grupo(origen_grupo.id):
+            v_copy = copy.deepcopy(viga)
+            v_copy.id = uuid.uuid4().hex[:8]
+            v_copy.grupo_id = destino_id
+            v_copy._poligono_2d_recortado = None
+            self.project.vigas.append(v_copy)
+            
+        for losa in self.project.get_losas_en_grupo(origen_grupo.id):
+            l_copy = copy.deepcopy(losa)
+            l_copy.id = uuid.uuid4().hex[:8]
+            l_copy.grupo_id = destino_id
+            self.project.losas.append(l_copy)
+            
+        for carga in self.project.get_cargas_lineales_en_grupo(origen_grupo.id):
+            c_copy = copy.deepcopy(carga)
+            c_copy.id = uuid.uuid4().hex[:8]
+            c_copy.grupo_id = destino_id
+            self.project.cargas_lineales.append(c_copy)
+            
+        self.project.vigas_changed.emit()
+        self.project.losas_changed.emit()
+        self.project.cargas_lineales_changed.emit()
+        
+        QMessageBox.information(self, "Copia completada", f"Se han copiado los elementos al grupo '{destino_grupo.nombre}'.")
 
     # ------------------------------------------------------------------ apply
     def _apply(self) -> None:

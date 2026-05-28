@@ -12,6 +12,8 @@ Hito connections
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Optional, Any
+import math
 import uuid
 
 
@@ -52,6 +54,28 @@ class Viga:
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
+    _poligono_2d_recortado: Optional[Any] = field(default=None, init=False, repr=False)
+
+    def invalidate_cache(self) -> None:
+        """Clear the cached 2D footprint."""
+        self._poligono_2d_recortado = None
+
+    def get_polygon_2d(self, pilares_union=None):
+        """Returns the shapely geometry of the beam minus the pillars."""
+        if self._poligono_2d_recortado is not None:
+            return self._poligono_2d_recortado
+            
+        try:
+            from shapely.geometry import LineString, Polygon
+            line = LineString([self.nodo_inicial, self.nodo_final])
+            poly = line.buffer(self.ancho / 2, cap_style=2)
+            if pilares_union is not None and not pilares_union.is_empty:
+                poly = poly.difference(pilares_union)
+            self._poligono_2d_recortado = poly
+            return poly
+        except ImportError:
+            return None
+
     # ------------------------------------------------------------------ helpers
     def as_shapely_line(self):
         """Return this beam as a Shapely ``LineString``.
@@ -69,10 +93,10 @@ class Viga:
 
     @property
     def longitud(self) -> float:
-        """Beam length in plan [m]."""
-        dx = self.nodo_final[0] - self.nodo_inicial[0]
-        dy = self.nodo_final[1] - self.nodo_inicial[1]
-        return (dx ** 2 + dy ** 2) ** 0.5
+        """Compute the Euclidean distance between ``nodo_inicial`` and ``nodo_final``."""
+        x1, y1 = self.nodo_inicial
+        x2, y2 = self.nodo_final
+        return math.hypot(x2 - x1, y2 - y1)
 
     @property
     def seccion_label(self) -> str:

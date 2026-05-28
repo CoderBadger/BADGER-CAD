@@ -152,6 +152,8 @@ class Ribbon(QWidget):
         datos_generales:       User wants to open DatosGeneralesDialog.
         grid_spacing_changed:  User changed the grid snap spacing.
         nuevo_proyecto:        New project requested.
+        abrir_proyecto:        Open project requested.
+        guardar_proyecto:      Save project requested.
     """
 
     tool_pilar_requested        = pyqtSignal()
@@ -167,6 +169,8 @@ class Ribbon(QWidget):
     datos_generales             = pyqtSignal()
     grid_spacing_changed        = pyqtSignal(float)
     nuevo_proyecto              = pyqtSignal()
+    abrir_proyecto              = pyqtSignal()
+    guardar_proyecto            = pyqtSignal()
     esc_tool                    = pyqtSignal()
     calcular_requested          = pyqtSignal()
     ver_deformada_requested     = pyqtSignal()
@@ -194,8 +198,8 @@ class Ribbon(QWidget):
 
         self._tabs.addTab(self._tab_inicio(),  "Inicio")
         self._tabs.addTab(self._tab_pilares(), "Pilares")
-        self._tabs.addTab(self._tab_losas(),   "Losas")
         self._tabs.addTab(self._tab_vigas(),   "Vigas")
+        self._tabs.addTab(self._tab_losas(),   "Losas")
         self._tabs.addTab(self._tab_cargas(),  "Cargas")
         self._tabs.addTab(self._tab_calcular(),"Calcular")
         
@@ -216,8 +220,11 @@ class Ribbon(QWidget):
         self._btn_nuevo = _tool_btn("📄", "Nuevo", "Crear nuevo proyecto")
         self._btn_nuevo.clicked.connect(self.nuevo_proyecto)
 
-        self._btn_abrir = _tool_btn("📂", "Abrir", "Abrir proyecto (.bdr)")
+        self._btn_abrir = _tool_btn("📂", "Abrir", "Abrir proyecto (.bgcad)")
+        self._btn_abrir.clicked.connect(self.abrir_proyecto)
+        
         self._btn_guardar = _tool_btn("💾", "Guardar", "Guardar proyecto")
+        self._btn_guardar.clicked.connect(self.guardar_proyecto)
 
         lay.addWidget(_group_widget("Proyecto", [self._btn_nuevo, self._btn_abrir, self._btn_guardar]))
         lay.addWidget(_separator())
@@ -316,6 +323,11 @@ class Ribbon(QWidget):
         lay.addWidget(_group_widget("Losas", [self._btn_losa, self._btn_borrar_losa]))
         lay.addWidget(note)
         lay.addStretch()
+
+        self._btn_esc_losa = _tool_btn("✕", "ESC / Fin", "Terminar herramienta activa")
+        self._btn_esc_losa.clicked.connect(self.esc_tool)
+        lay.addWidget(_group_widget("Control", [self._btn_esc_losa]))
+        
         return w
 
     def _tab_vigas(self) -> QWidget:
@@ -351,7 +363,7 @@ class Ribbon(QWidget):
         lay.setContentsMargins(12, 0, 12, 0)
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        
+
         self._btn_carga_lineal = _tool_btn("🔴", "Carga\nLineal",
                                    "Trazar una carga lineal especial sobre la planta",
                                    checkable=True)
@@ -363,13 +375,12 @@ class Ribbon(QWidget):
         self._btn_borrar_carga_lineal.clicked.connect(self._on_borrar_carga_lineal_clicked)
         
         lay.addWidget(_group_widget("Cargas", [self._btn_carga_lineal, self._btn_borrar_carga_lineal]))
-        
-        self._btn_esc_c = _tool_btn("✕", "ESC / Fin",
-                                    "Terminar herramienta activa")
+        lay.addStretch()
+
+        self._btn_esc_c = _tool_btn("✕", "ESC / Fin", "Terminar herramienta activa")
         self._btn_esc_c.clicked.connect(self.esc_tool)
         lay.addWidget(_group_widget("Control", [self._btn_esc_c]))
         
-        lay.addStretch()
         return w
 
     def _tab_calcular(self) -> QWidget:

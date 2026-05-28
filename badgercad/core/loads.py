@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import uuid
 from typing import Tuple
+from enum import Enum
 
 DENSIDAD_HORMIGON = 25.0  # kN/m3 - Densidad estándar del hormigón armado
 
-class Hipotesis:
+class Hipotesis(str, Enum):
     """Enumeration of standard load hypotheses (NB 1225002 / ASCE 7)."""
     PP = "PP"  # Peso Propio (Self-weight)
     CM = "CM"  # Carga Muerta / Superimpuesta (Dead Load)

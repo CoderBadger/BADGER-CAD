@@ -29,7 +29,16 @@ AXIS_X_COLOR     = "#E05252"
 AXIS_Y_COLOR     = "#52C752"
 LABEL_COLOR      = "#FFFFFF"
 
+_actores_2d: dict = {}
 
+def invalidate_vigas_actores() -> None:
+    """Clear vigas from the actor cache so they are regenerated on the next render.
+    Called when columns move, changing the boolean cut geometry.
+    """
+    global _actores_2d
+    keys_to_remove = [k for k in _actores_2d.keys() if k.startswith("viga_2d_") or k.startswith("panio_2d_")]
+    for k in keys_to_remove:
+        del _actores_2d[k]
 # ================================================================== mesh builders
 def _pilar_box_2d(pilar) -> pv.PolyData:
     """Flat box (z=0) representing a column footprint for 2D plan view.
@@ -62,13 +71,14 @@ def _pilar_box_3d(pilar, z_bottom: float, z_top: float) -> pv.PolyData:
 def _viga_box_2d(viga, pilares_union=None) -> pv.PolyData:
     """Flat polygon for a beam, cut around pillars using boolean difference."""
     import numpy as np
+    
+    # Use the cache first!
+    poly = viga.get_polygon_2d(pilares_union)
+    if poly is None:
+        return pv.PolyData()
+        
     try:
-        from shapely.geometry import LineString, Polygon
-        line = LineString([viga.nodo_inicial, viga.nodo_final])
-        poly = line.buffer(viga.ancho / 2, cap_style=2)
-        if pilares_union is not None and not pilares_union.is_empty:
-            poly = poly.difference(pilares_union)
-            
+        from shapely.geometry import Polygon
         def extract_polys(p):
             if isinstance(p, Polygon):
                 return [p]
@@ -140,6 +150,24 @@ def _losa_polygon(losa, z: float = 0.0) -> Optional[pv.PolyData]:
     return mesh
 
 
+def _hueco_x_lines(losa, z: float = 0.0) -> Optional[pv.PolyData]:
+    """Wireframe X crossing the bounding box of a void slab."""
+    if not losa.is_valid():
+        return None
+    verts = np.array([[v[0], v[1], z] for v in losa.vertices], dtype=float)
+    min_x, min_y = np.min(verts[:, 0]), np.min(verts[:, 1])
+    max_x, max_y = np.max(verts[:, 0]), np.max(verts[:, 1])
+    
+    p1 = np.array([min_x, min_y, z])
+    p2 = np.array([max_x, max_y, z])
+    p3 = np.array([min_x, max_y, z])
+    p4 = np.array([max_x, min_y, z])
+    
+    line1 = pv.Line(p1, p2)
+    line2 = pv.Line(p3, p4)
+    return line1.merge(line2)
+
+
 def _losa_solid_3d(losa, z_top: float) -> Optional[pv.PolyData]:
     """Extruded solid for a slab in the 3D perspective viewer.
 
@@ -198,9 +226,9 @@ def setup_canvas_2d(plotter: "QtInteractor") -> None:
 
 
 def render_canvas_2d(plotter: "QtInteractor", project: "Project") -> None:
-    """Clear and fully re-render the 2D plan for the currently active level."""
-    # Remove all element actors (keep ghost if present)
-    _clear_element_actors(plotter)
+    """Incrementally re-render the 2D plan for the currently active level using O(1) actor caching."""
+    global _actores_2d
+    visible_names = set()
 
     nivel = project.nivel_activo
     if nivel is None:
@@ -210,35 +238,37 @@ def render_canvas_2d(plotter: "QtInteractor", project: "Project") -> None:
 
     # --- Pilares -------------------------------------------------------
     for pilar in project.get_pilares_en_nivel(nivel.id):
-        mesh  = _pilar_box_2d(pilar)
-        color = PILAR_VIN_COLOR if pilar.con_vinculacion_exterior else PILAR_SIN_COLOR
-        plotter.add_mesh(
-            mesh, color=color, show_edges=True,
-            edge_color=PILAR_EDGE_COLOR, line_width=1.5,
-            name=f"pilar_2d_{pilar.id}", pickable=True,
-            render_lines_as_tubes=False,
-        )
-        # Section label
-        pt = np.array([[pilar.x, pilar.y, 0.05]])
-        plotter.add_point_labels(
-            pt, [pilar.seccion_label],
-            font_size=8, text_color=LABEL_COLOR,
-            always_visible=True, shadow=False,
-            shape_opacity=0.0, fill_shape=False,
-            name=f"label_pilar_{pilar.id}",
-        )
+        name_mesh = f"pilar_2d_{pilar.id}"
+        name_lbl = f"label_pilar_{pilar.id}"
+        visible_names.add(name_mesh)
+        visible_names.add(name_lbl)
+        
+        if name_mesh not in _actores_2d:
+            mesh  = _pilar_box_2d(pilar)
+            color = PILAR_VIN_COLOR if pilar.con_vinculacion_exterior else PILAR_SIN_COLOR
+            actor = plotter.add_mesh(
+                mesh, color=color, show_edges=True,
+                edge_color=PILAR_EDGE_COLOR, line_width=1.5,
+                name=name_mesh, pickable=True,
+                render_lines_as_tubes=False,
+            )
+            _actores_2d[name_mesh] = actor
+            
+        if name_lbl not in _actores_2d:
+            pt = np.array([[pilar.x, pilar.y, 0.05]])
+            lbl_actor = plotter.add_point_labels(
+                pt, [pilar.seccion_label],
+                font_size=8, text_color=LABEL_COLOR,
+                always_visible=True, shadow=False,
+                shape_opacity=0.0, fill_shape=False,
+                name=name_lbl,
+            )
+            _actores_2d[name_lbl] = lbl_actor
 
     # --- Vigas & Paños --------------------------------------------------
     vigas = project.get_vigas_en_grupo(grupo.id) if grupo else []
     
-    # Pre-calculate pillars union for boolean differences
-    try:
-        from shapely.ops import unary_union
-        from shapely.geometry import Polygon
-        pilares_polys = [Polygon(p.footprint_2d()) for p in project.pilares]
-        pilares_union = unary_union(pilares_polys) if pilares_polys else None
-    except ImportError:
-        pilares_union = None
+    pilares_union = project.get_pilares_union()
 
     from badgercad.core.topology import detect_panios
     panios = detect_panios(vigas)
@@ -246,80 +276,136 @@ def render_canvas_2d(plotter: "QtInteractor", project: "Project") -> None:
     # Render paños (bays)
     for i, panio in enumerate(panios):
         import hashlib
-        # Use a hash of the coordinates to create a stable ID for the panio
         coords_str = str(list(panio.exterior.coords))
         panio_hash = hashlib.md5(coords_str.encode()).hexdigest()[:8]
-        verts = np.array([[x, y, -0.015] for x, y in panio.exterior.coords], dtype=float)
-        n = len(verts) - 1 # shapely closes the ring
-        faces = np.array([n] + list(range(n)), dtype=int)
-        mesh = pv.PolyData(verts[:n], faces)
-        plotter.add_mesh(
-            mesh, color=PANIO_COLOR, opacity=0.3, show_edges=False,
-            name=f"panio_2d_{panio_hash}"
-        )
+        name_mesh = f"panio_2d_{panio_hash}"
+        visible_names.add(name_mesh)
+        
+        if name_mesh not in _actores_2d:
+            verts = np.array([[x, y, -0.015] for x, y in panio.exterior.coords], dtype=float)
+            n = len(verts) - 1 # shapely closes the ring
+            faces = np.array([n] + list(range(n)), dtype=int)
+            mesh = pv.PolyData(verts[:n], faces)
+            actor = plotter.add_mesh(
+                mesh, color=PANIO_COLOR, opacity=0.3, show_edges=False,
+                name=name_mesh
+            )
+            _actores_2d[name_mesh] = actor
 
     # Render vigas
     for viga in vigas:
-        mesh = _viga_box_2d(viga, pilares_union)
-        is_zuncho = getattr(viga, "tipo", "") == "ZUNCHO_BORDE"
-        color = ZUNCHO_COLOR if is_zuncho else VIGA_COLOR
-        edge_color = ZUNCHO_EDGE if is_zuncho else VIGA_EDGE_COLOR
-        opacity = 0.5 if is_zuncho else 1.0
+        name_mesh = f"viga_2d_{viga.id}"
+        name_lbl = f"label_viga_{viga.id}"
+        visible_names.add(name_mesh)
+        visible_names.add(name_lbl)
         
-        plotter.add_mesh(
-            mesh, color=color, opacity=opacity, show_edges=True,
-            edge_color=edge_color, line_width=1.5,
-            name=f"viga_2d_{viga.id}", pickable=True,
-            render_lines_as_tubes=False,
-        )
-        # Section label
-        pt = np.array([[(viga.nodo_inicial[0]+viga.nodo_final[0])/2, (viga.nodo_inicial[1]+viga.nodo_final[1])/2, 0.05]])
-        plotter.add_point_labels(
-            pt, [viga.seccion_label],
-            font_size=8, text_color=LABEL_COLOR,
-            always_visible=True, shadow=False,
-            shape_opacity=0.0, fill_shape=False,
-            name=f"label_viga_{viga.id}",
-        )
+        if name_mesh not in _actores_2d:
+            mesh = _viga_box_2d(viga, pilares_union)
+            is_zuncho = getattr(viga, "tipo", "") == "ZUNCHO_BORDE"
+            color = ZUNCHO_COLOR if is_zuncho else VIGA_COLOR
+            edge_color = ZUNCHO_EDGE if is_zuncho else VIGA_EDGE_COLOR
+            opacity = 0.5 if is_zuncho else 1.0
+            
+            actor = plotter.add_mesh(
+                mesh, color=color, opacity=opacity, show_edges=True,
+                edge_color=edge_color, line_width=1.5,
+                name=name_mesh, pickable=True,
+                render_lines_as_tubes=False,
+            )
+            _actores_2d[name_mesh] = actor
+            
+        if name_lbl not in _actores_2d:
+            pt = np.array([[(viga.nodo_inicial[0]+viga.nodo_final[0])/2, (viga.nodo_inicial[1]+viga.nodo_final[1])/2, 0.05]])
+            lbl_actor = plotter.add_point_labels(
+                pt, [viga.seccion_label],
+                font_size=8, text_color=LABEL_COLOR,
+                always_visible=True, shadow=False,
+                shape_opacity=0.0, fill_shape=False,
+                name=name_lbl,
+            )
+            _actores_2d[name_lbl] = lbl_actor
 
     # --- Losas ----------------------------------------------------------
     if grupo is not None:
         for losa in project.get_losas_en_grupo(grupo.id):
-            mesh = _losa_polygon(losa, z=0.0)
-            if mesh is not None:
-                plotter.add_mesh(
-                    mesh, color=LOSA_COLOR, opacity=0.40,
-                    show_edges=True, edge_color=LOSA_EDGE_COLOR, line_width=1.5,
-                    name=f"losa_2d_{losa.id}",
-                    render_lines_as_tubes=False,
-                )
+            is_hueco = getattr(losa, "tipo", "NORMAL") == "HUECO"
+            name_losa = f"losa_2d_{losa.id}"
+            name_x = f"losa_2d_x_{losa.id}"
+            
+            if is_hueco:
+                visible_names.add(name_x)
+                visible_names.add(name_losa)
+                
+                if name_x not in _actores_2d:
+                    x_lines = _hueco_x_lines(losa, z=0.0)
+                    if x_lines is not None:
+                        actor = plotter.add_mesh(
+                            x_lines, color="#3A4A60", line_width=1.5,
+                            name=name_x, render_lines_as_tubes=False,
+                        )
+                        _actores_2d[name_x] = actor
+                        
+                if name_losa not in _actores_2d:
+                    mesh = _losa_polygon(losa, z=0.0)
+                    if mesh is not None:
+                        actor = plotter.add_mesh(
+                            mesh, color="#0D1117", opacity=0.0,
+                            show_edges=True, edge_color="#3A4A60", line_width=1.5,
+                            name=name_losa, render_lines_as_tubes=False,
+                        )
+                        _actores_2d[name_losa] = actor
+            else:
+                visible_names.add(name_losa)
+                if name_losa not in _actores_2d:
+                    mesh = _losa_polygon(losa, z=0.0)
+                    if mesh is not None:
+                        actor = plotter.add_mesh(
+                            mesh, color=LOSA_COLOR, opacity=0.40,
+                            show_edges=True, edge_color=LOSA_EDGE_COLOR, line_width=1.5,
+                            name=name_losa, render_lines_as_tubes=False,
+                        )
+                        _actores_2d[name_losa] = actor
 
     # --- Cargas Lineales ------------------------------------------------
     if grupo is not None:
         cargas = project.get_cargas_lineales_en_grupo(grupo.id)
         for carga in cargas:
-            p1 = carga.p1
-            p2 = carga.p2
-            arr = np.array([[p1[0], p1[1], 0.03], [p2[0], p2[1], 0.03]], dtype=float)
-            poly = pv.PolyData()
-            poly.points = arr
-            poly.lines = np.array([2, 0, 1], dtype=int)
+            name_mesh = f"carga_2d_{carga.id}"
+            name_lbl = f"label_carga_{carga.id}"
+            visible_names.add(name_mesh)
+            visible_names.add(name_lbl)
             
-            # Draw dashed line or thick line
-            plotter.add_mesh(
-                poly, color="#FF4500", line_width=3.0,
-                name=f"carga_2d_{carga.id}",
-                render_lines_as_tubes=False,
-            )
-            # Label
-            pt = np.array([[(p1[0]+p2[0])/2, (p1[1]+p2[1])/2, 0.05]])
-            plotter.add_point_labels(
-                pt, [f"q={carga.magnitud}kN/m ({carga.hipotesis})"],
-                font_size=9, text_color="#FF4500",
-                always_visible=True, shadow=True,
-                shape_opacity=0.0, fill_shape=False,
-                name=f"label_carga_{carga.id}",
-            )
+            if name_mesh not in _actores_2d:
+                p1 = carga.p1
+                p2 = carga.p2
+                arr = np.array([[p1[0], p1[1], 0.03], [p2[0], p2[1], 0.03]], dtype=float)
+                poly = pv.PolyData()
+                poly.points = arr
+                poly.lines = np.array([2, 0, 1], dtype=int)
+                
+                actor = plotter.add_mesh(
+                    poly, color="#FF4500", line_width=3.0,
+                    name=name_mesh,
+                    render_lines_as_tubes=False,
+                )
+                _actores_2d[name_mesh] = actor
+                
+            if name_lbl not in _actores_2d:
+                pt = np.array([[(carga.p1[0]+carga.p2[0])/2, (carga.p1[1]+carga.p2[1])/2, 0.05]])
+                lbl_actor = plotter.add_point_labels(
+                    pt, [f"q={carga.magnitud}kN/m ({carga.hipotesis})"],
+                    font_size=9, text_color="#FF4500",
+                    always_visible=True, shadow=True,
+                    shape_opacity=0.0, fill_shape=False,
+                    name=name_lbl,
+                )
+                _actores_2d[name_lbl] = lbl_actor
+
+    # Differential actor removal
+    keys_to_remove = [k for k in _actores_2d.keys() if k not in visible_names]
+    for k in keys_to_remove:
+        plotter.remove_actor(k)
+        del _actores_2d[k]
 
 
 def _clear_element_actors(plotter: "QtInteractor") -> None:
@@ -446,13 +532,7 @@ def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
                          name=f"p3d_{pilar.id}", render_lines_as_tubes=False)
 
     # --- Vigas 3D --------------------------------------------------
-    try:
-        from shapely.ops import unary_union
-        from shapely.geometry import Polygon
-        pilares_polys = [Polygon(p.footprint_2d()) for p in project.pilares]
-        pilares_union = unary_union(pilares_polys) if pilares_polys else None
-    except ImportError:
-        pilares_union = None
+    pilares_union = project.get_pilares_union()
         
     for grupo in project.grupos:
         niveles_del_grupo = [project.get_nivel_by_id(nid) for nid in grupo.nivel_ids]
@@ -472,6 +552,16 @@ def render_3d_complete(plotter: "QtInteractor", project: "Project") -> None:
         for nivel_rep in (nv for nv in niveles_del_grupo if nv is not None):
             z_top = nivel_rep.cota
             for losa in project.get_losas_en_grupo(grupo.id):
+                is_hueco = getattr(losa, "tipo", "NORMAL") == "HUECO"
+                if is_hueco:
+                    x_lines = _hueco_x_lines(losa, z=z_top)
+                    if x_lines is not None:
+                        plotter.add_mesh(
+                            x_lines, color="#6A7A8A", line_width=1.5,
+                            name=f"l3d_x_{losa.id}_{nivel_rep.id}", render_lines_as_tubes=False,
+                        )
+                    continue
+
                 mesh = _losa_solid_3d(losa, z_top=z_top)
                 if mesh is not None:
                     plotter.add_mesh(
@@ -512,16 +602,10 @@ def render_mef_results(plotter, project, mef_results, active_field="Desplazamien
         hipotesis: The load combination/hypothesis to visualize ("Envolvente", "PP", "CM", "ELU_1", etc.)
     """
     plotter.clear()
-    setup_viewer_3d(plotter)
+    plotter.set_background("#0D1117", top="#1A2A3A")
     
     # Render background structural context (Pilares and Vigas) semi-transparently
-    try:
-        from shapely.ops import unary_union
-        from shapely.geometry import Polygon
-        pilares_polys = [Polygon(p.footprint_2d()) for p in project.pilares]
-        pilares_union = unary_union(pilares_polys) if pilares_polys else None
-    except ImportError:
-        pilares_union = None
+    pilares_union = project.get_pilares_union()
 
     for pilar in project.pilares:
         mesh = _pilar_box_3d(pilar, 0.0, 10.0) # simplify height for context
