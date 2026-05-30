@@ -7,11 +7,12 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QLabel,
     QPushButton, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QColor
 
 from badgercad.core.project import Project
 from badgercad.core.elements.nivel import Nivel
+from badgercad.ui.utils.icon_manager import IconManager
 
 _PANEL_STYLE = """
 QWidget#nivel_panel {
@@ -107,6 +108,7 @@ class NivelPanel(QWidget):
 
         # List
         self._list = QListWidget()
+        self._list.setIconSize(QSize(16, 16))
         self._list.itemClicked.connect(self._on_item_clicked)
         root.addWidget(self._list)
 
@@ -120,9 +122,11 @@ class NivelPanel(QWidget):
         nav_row.setContentsMargins(8, 6, 8, 6)
         nav_row.setSpacing(6)
 
-        self._btn_up = QPushButton("▲  Subir")
+        self._btn_up = QPushButton("Subir")
+        self._btn_up.setIcon(IconManager.get_icon("nav_up", "▲"))
         self._btn_up.setObjectName("nav_btn")
-        self._btn_dn = QPushButton("▼  Bajar")
+        self._btn_dn = QPushButton("Bajar")
+        self._btn_dn.setIcon(IconManager.get_icon("nav_down", "▼"))
         self._btn_dn.setObjectName("nav_btn")
         self._btn_up.clicked.connect(self._go_up)
         self._btn_dn.clicked.connect(self._go_down)
@@ -140,7 +144,8 @@ class NivelPanel(QWidget):
 
         for grupo in self.project.grupos:
             # Group header
-            g_item = QListWidgetItem(f"  {_GROUP_ICON}  {grupo.nombre}")
+            g_item = QListWidgetItem(f" {grupo.nombre}")
+            g_item.setIcon(IconManager.get_icon("group", _GROUP_ICON))
             g_item.setFlags(Qt.ItemFlag.NoItemFlags)
             g_item.setForeground(QColor("#5A8FA8"))
             font = QFont()
@@ -160,9 +165,14 @@ class NivelPanel(QWidget):
             )
             for nivel in group_niveles:
                 is_active = nivel.id == activo_id
-                icon  = _ACTIVE_ICON if is_active else _LEVEL_ICON
-                label = f"    {icon}  {nivel.nombre}  ({nivel.cota:+.1f} m)"
+                
+                icon_name = "level_active" if is_active else "level"
+                fallback_char = _ACTIVE_ICON if is_active else _LEVEL_ICON
+                
+                label = f" {nivel.nombre}  ({nivel.cota:+.1f} m)"
                 item  = QListWidgetItem(label)
+                item.setIcon(IconManager.get_icon(icon_name, fallback_char))
+                
                 item.setData(Qt.ItemDataRole.UserRole, nivel.id)
                 if is_active:
                     item.setForeground(QColor("#4A90D9"))

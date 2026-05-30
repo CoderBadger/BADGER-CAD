@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QIcon
 
+from badgercad.ui.utils.icon_manager import IconManager
+
 RIBBON_QSS = """
 /* ── Ribbon container ── */
 QWidget#ribbon_root {
@@ -47,7 +49,7 @@ QToolButton {
     color: #A0B0C8;
     border: none;
     border-radius: 5px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     font-size: 10px;
     min-width: 54px;
     max-width: 80px;
@@ -111,11 +113,12 @@ def _grp_label(text: str) -> QLabel:
     return lbl
 
 
-def _tool_btn(icon_txt: str, label: str,
+def _tool_btn(icon_name: str, fallback_char: str, label: str,
               tooltip: str = "",
               checkable: bool = False) -> QToolButton:
     btn = QToolButton()
-    btn.setText(f"{icon_txt}\n{label}")
+    btn.setText(label)
+    btn.setIcon(IconManager.get_icon(icon_name, fallback_char))
     btn.setToolTip(tooltip)
     btn.setCheckable(checkable)
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -128,8 +131,8 @@ def _group_widget(label: str, buttons: list[QWidget]) -> QWidget:
     """Vertical group: label at bottom, buttons in a row."""
     frame = QWidget()
     outer = QVBoxLayout(frame)
-    outer.setContentsMargins(4, 2, 4, 2)
-    outer.setSpacing(2)
+    outer.setContentsMargins(4, 4, 4, 4)
+    outer.setSpacing(4)
 
     btn_row = QHBoxLayout()
     btn_row.setSpacing(2)
@@ -180,7 +183,7 @@ class Ribbon(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("ribbon_root")
-        self.setFixedHeight(88)
+        self.setFixedHeight(115)
         self.setStyleSheet(RIBBON_QSS)
         self._build_ui()
 
@@ -217,30 +220,30 @@ class Ribbon(QWidget):
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         # Project group
-        self._btn_nuevo = _tool_btn("📄", "Nuevo", "Crear nuevo proyecto")
+        self._btn_nuevo = _tool_btn("file_new", "📄", "Nuevo", "Crear nuevo proyecto")
         self._btn_nuevo.clicked.connect(self.nuevo_proyecto)
 
-        self._btn_abrir = _tool_btn("📂", "Abrir", "Abrir proyecto (.bgcad)")
+        self._btn_abrir = _tool_btn("file_open", "📂", "Abrir", "Abrir proyecto (.bgcad)")
         self._btn_abrir.clicked.connect(self.abrir_proyecto)
         
-        self._btn_guardar = _tool_btn("💾", "Guardar", "Guardar proyecto")
+        self._btn_guardar = _tool_btn("file_save", "💾", "Guardar", "Guardar proyecto")
         self._btn_guardar.clicked.connect(self.guardar_proyecto)
 
         lay.addWidget(_group_widget("Proyecto", [self._btn_nuevo, self._btn_abrir, self._btn_guardar]))
         lay.addWidget(_separator())
 
         # View group
-        self._btn_3d = _tool_btn("🏗", "Vista 3D", "Abrir visor 3D del edificio")
+        self._btn_3d = _tool_btn("view_3d", "🏗", "Vista 3D", "Abrir visor 3D del edificio")
         self._btn_3d.clicked.connect(self.vista_3d_requested)
 
-        self._btn_plantas = _tool_btn("📐", "Plantas", "Gestionar plantas y grupos")
+        self._btn_plantas = _tool_btn("view_levels", "📐", "Plantas", "Gestionar plantas y grupos")
         self._btn_plantas.clicked.connect(self.gestionar_plantas)
 
         lay.addWidget(_group_widget("Vista", [self._btn_3d, self._btn_plantas]))
         lay.addWidget(_separator())
 
         # Settings group
-        self._btn_datos = _tool_btn("⚙", "Datos Gen.", "Datos generales del proyecto")
+        self._btn_datos = _tool_btn("settings", "⚙", "Datos Gen.", "Datos generales del proyecto")
         self._btn_datos.clicked.connect(self.datos_generales)
 
         # Grid spacing combo
@@ -272,17 +275,17 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self._btn_pilar = _tool_btn("⬛", "Colocar\nPilar",
+        self._btn_pilar = _tool_btn("tool_pilar", "⬛", "Colocar\nPilar",
                                     "Colocar pilares de hormigón (CYPECAD flow)",
                                     checkable=True)
         self._btn_pilar.clicked.connect(self._on_pilar_clicked)
 
-        self._btn_borrar_pilar = _tool_btn("🗑", "Borrar\nPilar",
+        self._btn_borrar_pilar = _tool_btn("tool_borrar", "🗑", "Borrar\nPilar",
                                            "Borrar pilar existente (clic sobre él)",
                                            checkable=True)
         self._btn_borrar_pilar.clicked.connect(self._on_borrar_pilar_clicked)
 
-        self._btn_pantalla = _tool_btn("🧱", "Pantalla\n/Muro",
+        self._btn_pantalla = _tool_btn("tool_pantalla", "🧱", "Pantalla\n/Muro",
                                        "Muro de corte o pantalla [Hito 2]")
         self._btn_pantalla.setEnabled(False)
 
@@ -292,7 +295,7 @@ class Ribbon(QWidget):
         lay.addWidget(_group_widget("Edición", [self._btn_borrar_pilar]))
         lay.addWidget(_separator())
 
-        self._btn_esc_p = _tool_btn("✕", "ESC / Fin",
+        self._btn_esc_p = _tool_btn("tool_esc", "✕", "ESC / Fin",
                                     "Terminar herramienta activa")
         self._btn_esc_p.clicked.connect(self.esc_tool)
         lay.addWidget(_group_widget("Control", [self._btn_esc_p]))
@@ -306,13 +309,13 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self._btn_losa = _tool_btn("🟩", "Paño\nAutomático",
+        self._btn_losa = _tool_btn("tool_losa", "🟩", "Paño\nAutomático",
                                    "Crear losa (clic dentro de un recinto de vigas)",
                                    checkable=True)
         self._btn_losa.clicked.connect(self._on_losa_clicked)
         self._btn_losa.setEnabled(True)
 
-        self._btn_borrar_losa = _tool_btn("🗑", "Borrar\nLosa",
+        self._btn_borrar_losa = _tool_btn("tool_borrar", "🗑", "Borrar\nLosa",
                                           "Eliminar una losa existente",
                                           checkable=True)
         self._btn_borrar_losa.clicked.connect(self._on_borrar_losa_clicked)
@@ -322,12 +325,12 @@ class Ribbon(QWidget):
 
         lay.addWidget(_group_widget("Losas", [self._btn_losa, self._btn_borrar_losa]))
         lay.addWidget(note)
-        lay.addStretch()
 
-        self._btn_esc_losa = _tool_btn("✕", "ESC / Fin", "Terminar herramienta activa")
+        self._btn_esc_losa = _tool_btn("tool_esc", "✕", "ESC / Fin", "Terminar herramienta activa")
         self._btn_esc_losa.clicked.connect(self.esc_tool)
         lay.addWidget(_group_widget("Control", [self._btn_esc_losa]))
         
+        lay.addStretch()
         return w
 
     def _tab_vigas(self) -> QWidget:
@@ -337,19 +340,19 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
-        self._btn_viga = _tool_btn("📏", "Dibujar\nViga",
+        self._btn_viga = _tool_btn("tool_viga", "📏", "Dibujar\nViga",
                                    "Trazado continuo de vigas (se ancla a pilares)",
                                    checkable=True)
         self._btn_viga.clicked.connect(self._on_viga_clicked)
         
-        self._btn_borrar_viga = _tool_btn("🗑", "Borrar\nViga",
+        self._btn_borrar_viga = _tool_btn("tool_borrar", "🗑", "Borrar\nViga",
                                           "Eliminar una viga existente",
                                           checkable=True)
         self._btn_borrar_viga.clicked.connect(self._on_borrar_viga_clicked)
         
         lay.addWidget(_group_widget("Vigas", [self._btn_viga, self._btn_borrar_viga]))
         
-        self._btn_esc_v = _tool_btn("✕", "ESC / Fin",
+        self._btn_esc_v = _tool_btn("tool_esc", "✕", "ESC / Fin",
                                     "Terminar herramienta activa")
         self._btn_esc_v.clicked.connect(self.esc_tool)
         lay.addWidget(_group_widget("Control", [self._btn_esc_v]))
@@ -364,23 +367,23 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self._btn_carga_lineal = _tool_btn("🔴", "Carga\nLineal",
+        self._btn_carga_lineal = _tool_btn("tool_carga", "🔴", "Carga\nLineal",
                                    "Trazar una carga lineal especial sobre la planta",
                                    checkable=True)
         self._btn_carga_lineal.clicked.connect(self._on_carga_lineal_clicked)
         
-        self._btn_borrar_carga_lineal = _tool_btn("🗑", "Borrar\nCarga",
+        self._btn_borrar_carga_lineal = _tool_btn("tool_borrar", "🗑", "Borrar\nCarga",
                                                   "Eliminar una carga lineal existente",
                                                   checkable=True)
         self._btn_borrar_carga_lineal.clicked.connect(self._on_borrar_carga_lineal_clicked)
         
         lay.addWidget(_group_widget("Cargas", [self._btn_carga_lineal, self._btn_borrar_carga_lineal]))
-        lay.addStretch()
 
-        self._btn_esc_c = _tool_btn("✕", "ESC / Fin", "Terminar herramienta activa")
+        self._btn_esc_c = _tool_btn("tool_esc", "✕", "ESC / Fin", "Terminar herramienta activa")
         self._btn_esc_c.clicked.connect(self.esc_tool)
         lay.addWidget(_group_widget("Control", [self._btn_esc_c]))
         
+        lay.addStretch()
         return w
 
     def _tab_calcular(self) -> QWidget:
@@ -390,7 +393,7 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
-        self._btn_calcular = _tool_btn("▶", "Calcular", "Ejecutar análisis MEF (Gravedad)")
+        self._btn_calcular = _tool_btn("calc_solve", "▶", "Calcular", "Ejecutar análisis MEF (Gravedad)")
         self._btn_calcular.clicked.connect(self.calcular_requested)
         lay.addWidget(_group_widget("Solver", [self._btn_calcular]))
         
@@ -404,13 +407,13 @@ class Ribbon(QWidget):
         lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
-        self._btn_deformada = _tool_btn("🌊", "Ver\nDeformada", "Mapa de Desplazamientos Z")
+        self._btn_deformada = _tool_btn("res_deformada", "🌊", "Ver\nDeformada", "Mapa de Desplazamientos Z")
         self._btn_deformada.clicked.connect(self.ver_deformada_requested)
         
-        self._btn_mxx = _tool_btn("💥", "Esfuerzos\nMxx", "Momentos Flectores X")
+        self._btn_mxx = _tool_btn("res_mxx", "💥", "Esfuerzos\nMxx", "Momentos Flectores X")
         self._btn_mxx.clicked.connect(self.ver_esfuerzos_mxx_requested)
         
-        self._btn_myy = _tool_btn("💥", "Esfuerzos\nMyy", "Momentos Flectores Y")
+        self._btn_myy = _tool_btn("res_myy", "💥", "Esfuerzos\nMyy", "Momentos Flectores Y")
         self._btn_myy.clicked.connect(self.ver_esfuerzos_myy_requested)
         
         lay.addWidget(_group_widget("Visualización 3D", [self._btn_deformada, self._btn_mxx, self._btn_myy]))
